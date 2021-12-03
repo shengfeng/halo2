@@ -22,6 +22,8 @@ and this project adheres to Rust's notion of
   - `Column::column_type`
   - `impl {PartialOrd, Ord} for Any`
   - `Error::ColumnNotInPermutation`
+  - `Constraints` helper, for constructing a gate from a set of constraints with
+    a common selector.
 - `halo2_proofs::poly::Basis: Copy` bound, and corresponding implementations for
   the provided bases.
 - `halo2_proofs::dev`:
