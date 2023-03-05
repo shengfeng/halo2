@@ -6,7 +6,7 @@ use crate::{
     circuit::{
         floor_planner::single_pass::SimpleTableLayouter,
         layouter::{RegionColumn, RegionLayouter, RegionShape, TableLayouter},
-        Cell, Layouter, Region, RegionIndex, RegionStart, Table,
+        Cell, Layouter, Region, RegionIndex, RegionStart, Table, Value,
     },
     plonk::{
         Advice, Any, Assigned, Assignment, Circuit, Column, Error, Fixed, FloorPlanner, Instance,
@@ -81,8 +81,8 @@ impl FloorPlanner for V1 {
 
         // - Determine how many rows our planned circuit will require.
         let first_unassigned_row = column_allocations
-            .iter()
-            .map(|(_, a)| a.unbounded_interval_start())
+            .values()
+            .map(|a| a.unbounded_interval_start())
             .max()
             .unwrap_or(0);
 
@@ -126,7 +126,7 @@ impl FloorPlanner for V1 {
                 || format!("Constant({:?})", value.evaluate()),
                 fixed_column,
                 fixed_row,
-                || Ok(value),
+                || Value::known(value),
             )?;
             plan.cs.copy(
                 fixed_column.into(),
@@ -396,7 +396,7 @@ impl<'r, 'a, F: Field, CS: Assignment<F> + 'a> RegionLayouter<F> for V1Region<'r
         annotation: &'v (dyn Fn() -> String + 'v),
         column: Column<Advice>,
         offset: usize,
-        to: &'v mut (dyn FnMut() -> Result<Assigned<F>, Error> + 'v),
+        to: &'v mut (dyn FnMut() -> Value<Assigned<F>> + 'v),
     ) -> Result<Cell, Error> {
         self.plan.cs.assign_advice(
             annotation,
@@ -419,7 +419,8 @@ impl<'r, 'a, F: Field, CS: Assignment<F> + 'a> RegionLayouter<F> for V1Region<'r
         offset: usize,
         constant: Assigned<F>,
     ) -> Result<Cell, Error> {
-        let advice = self.assign_advice(annotation, column, offset, &mut || Ok(constant))?;
+        let advice =
+            self.assign_advice(annotation, column, offset, &mut || Value::known(constant))?;
         self.constrain_constant(advice, constant)?;
 
         Ok(advice)
@@ -432,12 +433,10 @@ impl<'r, 'a, F: Field, CS: Assignment<F> + 'a> RegionLayouter<F> for V1Region<'r
         row: usize,
         advice: Column<Advice>,
         offset: usize,
-    ) -> Result<(Cell, Option<F>), Error> {
+    ) -> Result<(Cell, Value<F>), Error> {
         let value = self.plan.cs.query_instance(instance, row)?;
 
-        let cell = self.assign_advice(annotation, advice, offset, &mut || {
-            value.ok_or(Error::Synthesis).map(|v| v.into())
-        })?;
+        let cell = self.assign_advice(annotation, advice, offset, &mut || value.to_field())?;
 
         self.plan.cs.copy(
             cell.column,
@@ -449,12 +448,20 @@ impl<'r, 'a, F: Field, CS: Assignment<F> + 'a> RegionLayouter<F> for V1Region<'r
         Ok((cell, value))
     }
 
+    fn instance_value(
+        &mut self,
+        instance: Column<Instance>,
+        row: usize,
+    ) -> Result<Value<F>, Error> {
+        self.plan.cs.query_instance(instance, row)
+    }
+
     fn assign_fixed<'v>(
         &'v mut self,
         annotation: &'v (dyn Fn() -> String + 'v),
         column: Column<Fixed>,
         offset: usize,
-        to: &'v mut (dyn FnMut() -> Result<Assigned<F>, Error> + 'v),
+        to: &'v mut (dyn FnMut() -> Value<Assigned<F>> + 'v),
     ) -> Result<Cell, Error> {
         self.plan.cs.assign_fixed(
             annotation,

@@ -1,13 +1,11 @@
-//! Gadget and chips for the Poseidon algebraic hash function.
+//! The Poseidon algebraic hash function.
 
-use std::array;
 use std::convert::TryInto;
 use std::fmt;
 use std::marker::PhantomData;
 
-use group::ff::Field;
+use group::ff::{Field, PrimeField};
 use halo2_proofs::{
-    arithmetic::FieldExt,
     circuit::{AssignedCell, Chip, Layouter},
     plonk::Error,
 };
@@ -15,9 +13,8 @@ use halo2_proofs::{
 mod pow5;
 pub use pow5::{Pow5Chip, Pow5Config, StateWord};
 
-use crate::primitives::poseidon::{
-    Absorbing, ConstantLength, Domain, Spec, SpongeMode, Squeezing, State,
-};
+pub mod primitives;
+use primitives::{Absorbing, ConstantLength, Domain, Spec, SpongeMode, Squeezing, State};
 
 /// A word from the padded input to a Poseidon sponge.
 #[derive(Clone, Debug)]
@@ -29,7 +26,7 @@ pub enum PaddedWord<F: Field> {
 }
 
 /// The set of circuit instructions required to use the Poseidon permutation.
-pub trait PoseidonInstructions<F: FieldExt, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>:
+pub trait PoseidonInstructions<F: Field, S: Spec<F, T, RATE>, const T: usize, const RATE: usize>:
     Chip<F>
 {
     /// Variable representing the word over which the Poseidon permutation operates.
@@ -47,7 +44,7 @@ pub trait PoseidonInstructions<F: FieldExt, S: Spec<F, T, RATE>, const T: usize,
 ///
 /// [`Hash`]: self::Hash
 pub trait PoseidonSpongeInstructions<
-    F: FieldExt,
+    F: Field,
     S: Spec<F, T, RATE>,
     D: Domain<F, RATE>,
     const T: usize,
@@ -73,7 +70,7 @@ pub trait PoseidonSpongeInstructions<
 /// A word over which the Poseidon permutation operates.
 #[derive(Debug)]
 pub struct Word<
-    F: FieldExt,
+    F: Field,
     PoseidonChip: PoseidonInstructions<F, S, T, RATE>,
     S: Spec<F, T, RATE>,
     const T: usize,
@@ -83,7 +80,7 @@ pub struct Word<
 }
 
 impl<
-        F: FieldExt,
+        F: Field,
         PoseidonChip: PoseidonInstructions<F, S, T, RATE>,
         S: Spec<F, T, RATE>,
         const T: usize,
@@ -102,7 +99,7 @@ impl<
 }
 
 fn poseidon_sponge<
-    F: FieldExt,
+    F: Field,
     PoseidonChip: PoseidonSpongeInstructions<F, S, D, T, RATE>,
     S: Spec<F, T, RATE>,
     D: Domain<F, RATE>,
@@ -124,7 +121,7 @@ fn poseidon_sponge<
 /// A Poseidon sponge.
 #[derive(Debug)]
 pub struct Sponge<
-    F: FieldExt,
+    F: Field,
     PoseidonChip: PoseidonSpongeInstructions<F, S, D, T, RATE>,
     S: Spec<F, T, RATE>,
     M: SpongeMode,
@@ -139,7 +136,7 @@ pub struct Sponge<
 }
 
 impl<
-        F: FieldExt,
+        F: Field,
         PoseidonChip: PoseidonSpongeInstructions<F, S, D, T, RATE>,
         S: Spec<F, T, RATE>,
         D: Domain<F, RATE>,
@@ -212,7 +209,7 @@ impl<
 }
 
 impl<
-        F: FieldExt,
+        F: Field,
         PoseidonChip: PoseidonSpongeInstructions<F, S, D, T, RATE>,
         S: Spec<F, T, RATE>,
         D: Domain<F, RATE>,
@@ -243,7 +240,7 @@ impl<
 /// A Poseidon hash function, built around a sponge.
 #[derive(Debug)]
 pub struct Hash<
-    F: FieldExt,
+    F: Field,
     PoseidonChip: PoseidonSpongeInstructions<F, S, D, T, RATE>,
     S: Spec<F, T, RATE>,
     D: Domain<F, RATE>,
@@ -254,7 +251,7 @@ pub struct Hash<
 }
 
 impl<
-        F: FieldExt,
+        F: Field,
         PoseidonChip: PoseidonSpongeInstructions<F, S, D, T, RATE>,
         S: Spec<F, T, RATE>,
         D: Domain<F, RATE>,
@@ -269,7 +266,7 @@ impl<
 }
 
 impl<
-        F: FieldExt,
+        F: PrimeField,
         PoseidonChip: PoseidonSpongeInstructions<F, S, ConstantLength<L>, T, RATE>,
         S: Spec<F, T, RATE>,
         const T: usize,
@@ -283,7 +280,8 @@ impl<
         mut layouter: impl Layouter<F>,
         message: [AssignedCell<F, F>; L],
     ) -> Result<AssignedCell<F, F>, Error> {
-        for (i, value) in array::IntoIter::new(message)
+        for (i, value) in message
+            .into_iter()
             .map(PaddedWord::Message)
             .chain(<ConstantLength<L> as Domain<F, RATE>>::padding(L).map(PaddedWord::Padding))
             .enumerate()

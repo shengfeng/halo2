@@ -6,6 +6,90 @@ and this project adheres to Rust's notion of
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- The following structs now derive the `Eq` trait:
+  - `halo2_proofs::dev`:
+    - `failure::FailureLocation`
+    - `failure::VerifyFailure`
+    - `metadata::Gate`
+    - `metadata::Constraint`
+    - `metadata::Region`
+  - `halo2_proofs::poly::Rotation`
+- `halo2_proofs::arithmetic::FftGroup`
+- `halo2_proofs::circuit::layouter`:
+  - `RegionLayouter::instance_value` method added to provide access to
+    instance values within a region.
+
+### Changed
+- Migrated to `ff 0.13`, `group 0.13`, `pasta_curves 0.5`.
+- APIs with `F: pasta_curves::arithmetic::FieldExt` bounds have been changed to
+  use `ff` traits directly.
+- `halo2_proofs::arithmetic`:
+  - `best_fft, recursive_butterfly_arithmetic` now use the `FftGroup` trait
+    instead of the (now-removed) `pasta_curves::arithmetic::Group` trait.
+- `halo2::proofs::circuit`
+  - `VirtualCells`
+    - `query_any` now panics if a non-`cur` `Rotation` is used with the
+      `Column<Fixed>` variant.
+    - `query_fixed` now no longer takes a `Rotation` argument,
+      and can only be used to query the current rotation.
+
+## [0.2.0] - 2022-06-23
+### Added
+- `halo2_proofs::circuit::Value`, a more usable and type-safe replacement for
+  `Option<V>` in circuit synthesis.
+- `impl Mul<F: Field> for &Assigned<F>`
+
+### Changed
+All APIs that represented witnessed values as `Option<V>` now represent them as
+`halo2_proofs::circuit::Value<V>`. The core API changes are listed below.
+
+- The following APIs now take `Value<_>` instead of `Option<_>`:
+  - `halo2_proofs::plonk`:
+    - `Assignment::fill_from_row`
+- The following APIs now take value closures that return `Value<V>` instead of
+  `Result<V, Error>`:
+  - `halo2_proofs::circuit`:
+    - `Region::{assign_advice, assign_fixed}`
+    - `Table::assign_cell`
+  - `halo2_proofs::circuit::layouter`:
+    - `RegionLayouter::{assign_advice, assign_fixed}`
+    - `TableLayouter::assign_cell`
+  - `halo2_proofs::plonk`:
+    - `Assignment::{assign_advice, assign_fixed}`
+- The following APIs now return `Value<_>` instead of `Option<_>`:
+  - `halo2_proofs::circuit`:
+    - `AssignedCell::{value, value_field}`
+- The following APIs now return `Result<Value<F>, Error>` instead of
+  `Result<Option<F>, Error>`:
+  - `halo2_proofs::plonk`:
+    - `Assignment::query_instance`
+- The following APIs now return `Result<(Cell, Value<F>), Error>` instead of
+  `Result<(Cell, Option<F>), Error>`:
+  - `halo2_proofs::circuit::layouter`:
+    - `RegionLayouter::assign_advice_from_instance`
+- `halo2_proofs::plonk::BatchVerifier` has been rewritten. It is no longer a
+  verification strategy to be used with `verify_proof`, but instead manages the
+  entire batch verification process. The `batch` crate feature (enabled by
+  default) must be enabled to use the batch verifier.
+
+## [0.1.0] - 2022-05-10
+### Added
+- `halo2_proofs::dev`:
+  - `MockProver::assert_satisfied`, for requiring that a circuit is satisfied.
+    It panics like `assert_eq!(mock_prover.verify(), Ok(()))`, but pretty-prints
+    any verification failures before panicking.
+- `halo2_proofs::plonk::Constraints` helper, for constructing a gate from a set
+  of constraints with a common selector.
+
+### Changed
+- `halo2_proofs::dev`:
+  - `VerifyFailure::CellNotAssigned` now has a `gate_offset` field, storing the
+    offset in the region at which the gate queries the cell that needs to be
+    assigned.
+  - The `row` field of `VerifyFailure::Permutation` has been replaced by a
+    `location` field, which can now indicate whether the location falls within
+    an assigned region.
 
 ## [0.1.0-beta.4] - 2022-04-06
 ### Changed

@@ -1,12 +1,14 @@
 use super::super::{util::*, Gate};
-use halo2_proofs::{arithmetic::FieldExt, plonk::Expression};
-use std::{array, marker::PhantomData};
 
-pub struct CompressionGate<F: FieldExt>(PhantomData<F>);
+use group::ff::{Field, PrimeField};
+use halo2_proofs::plonk::{Constraint, Constraints, Expression};
+use std::marker::PhantomData;
 
-impl<F: FieldExt> CompressionGate<F> {
+pub struct CompressionGate<F: Field>(PhantomData<F>);
+
+impl<F: PrimeField> CompressionGate<F> {
     fn ones() -> Expression<F> {
-        Expression::Constant(F::one())
+        Expression::Constant(F::ONE)
     }
 
     // Decompose `A,B,C,D` words
@@ -32,7 +34,11 @@ impl<F: FieldExt> CompressionGate<F> {
         spread_word_lo: Expression<F>,
         word_hi: Expression<F>,
         spread_word_hi: Expression<F>,
-    ) -> impl Iterator<Item = (&'static str, Expression<F>)> {
+    ) -> Constraints<
+        F,
+        (&'static str, Expression<F>),
+        impl Iterator<Item = (&'static str, Expression<F>)>,
+    > {
         let check_spread_and_range =
             Gate::three_bit_spread_and_range(c_lo.clone(), spread_c_lo.clone())
                 .chain(Gate::three_bit_spread_and_range(
@@ -52,23 +58,25 @@ impl<F: FieldExt> CompressionGate<F> {
             + c_mid * F::from(1 << 16)
             + c_hi * F::from(1 << 19)
             + d * F::from(1 << 22)
-            + word_lo * (-F::one())
-            + word_hi * F::from(1 << 16) * (-F::one());
+            + word_lo * (-F::ONE)
+            + word_hi * F::from(1 << 16) * (-F::ONE);
         let spread_check = spread_a
             + spread_b * F::from(1 << 4)
             + spread_c_lo * F::from(1 << 26)
             + spread_c_mid * F::from(1 << 32)
             + spread_c_hi * F::from(1 << 38)
             + spread_d * F::from(1 << 44)
-            + spread_word_lo * (-F::one())
-            + spread_word_hi * F::from(1 << 32) * (-F::one());
+            + spread_word_lo * (-F::ONE)
+            + spread_word_hi * F::from(1 << 32) * (-F::ONE);
 
-        check_spread_and_range
-            .chain(Some(("range_check_tag_b", range_check_tag_b)))
-            .chain(Some(("range_check_tag_d", range_check_tag_d)))
-            .chain(Some(("dense_check", dense_check)))
-            .chain(Some(("spread_check", spread_check)))
-            .map(move |(name, poly)| (name, s_decompose_abcd.clone() * poly))
+        Constraints::with_selector(
+            s_decompose_abcd,
+            check_spread_and_range
+                .chain(Some(("range_check_tag_b", range_check_tag_b)))
+                .chain(Some(("range_check_tag_d", range_check_tag_d)))
+                .chain(Some(("dense_check", dense_check)))
+                .chain(Some(("spread_check", spread_check))),
+        )
     }
 
     // Decompose `E,F,G,H` words
@@ -94,7 +102,11 @@ impl<F: FieldExt> CompressionGate<F> {
         spread_word_lo: Expression<F>,
         word_hi: Expression<F>,
         spread_word_hi: Expression<F>,
-    ) -> impl Iterator<Item = (&'static str, Expression<F>)> {
+    ) -> Constraints<
+        F,
+        (&'static str, Expression<F>),
+        impl Iterator<Item = (&'static str, Expression<F>)>,
+    > {
         let check_spread_and_range =
             Gate::three_bit_spread_and_range(a_lo.clone(), spread_a_lo.clone())
                 .chain(Gate::three_bit_spread_and_range(
@@ -117,23 +129,25 @@ impl<F: FieldExt> CompressionGate<F> {
             + b_hi * F::from(1 << 8)
             + c * F::from(1 << 11)
             + d * F::from(1 << 25)
-            + word_lo * (-F::one())
-            + word_hi * F::from(1 << 16) * (-F::one());
+            + word_lo * (-F::ONE)
+            + word_hi * F::from(1 << 16) * (-F::ONE);
         let spread_check = spread_a_lo
             + spread_a_hi * F::from(1 << 6)
             + spread_b_lo * F::from(1 << 12)
             + spread_b_hi * F::from(1 << 16)
             + spread_c * F::from(1 << 22)
             + spread_d * F::from(1 << 50)
-            + spread_word_lo * (-F::one())
-            + spread_word_hi * F::from(1 << 32) * (-F::one());
+            + spread_word_lo * (-F::ONE)
+            + spread_word_hi * F::from(1 << 32) * (-F::ONE);
 
-        check_spread_and_range
-            .chain(Some(("range_check_tag_c", range_check_tag_c)))
-            .chain(Some(("range_check_tag_d", range_check_tag_d)))
-            .chain(Some(("dense_check", dense_check)))
-            .chain(Some(("spread_check", spread_check)))
-            .map(move |(name, poly)| (name, s_decompose_efgh.clone() * poly))
+        Constraints::with_selector(
+            s_decompose_efgh,
+            check_spread_and_range
+                .chain(Some(("range_check_tag_c", range_check_tag_c)))
+                .chain(Some(("range_check_tag_d", range_check_tag_d)))
+                .chain(Some(("dense_check", dense_check)))
+                .chain(Some(("spread_check", spread_check))),
+        )
     }
 
     // s_upper_sigma_0 on abcd words
@@ -151,7 +165,7 @@ impl<F: FieldExt> CompressionGate<F> {
         spread_c_mid: Expression<F>,
         spread_c_hi: Expression<F>,
         spread_d: Expression<F>,
-    ) -> impl Iterator<Item = (&'static str, Expression<F>)> {
+    ) -> Option<(&'static str, Expression<F>)> {
         let spread_witness = spread_r0_even
             + spread_r0_odd * F::from(2)
             + (spread_r1_even + spread_r1_odd * F::from(2)) * F::from(1 << 32);
@@ -174,9 +188,9 @@ impl<F: FieldExt> CompressionGate<F> {
             + spread_c_mid * F::from(1 << 52)
             + spread_c_hi * F::from(1 << 58);
         let xor = xor_0 + xor_1 + xor_2;
-        let check = spread_witness + (xor * -F::one());
+        let check = spread_witness + (xor * -F::ONE);
 
-        std::iter::empty().chain(Some(("s_upper_sigma_0", s_upper_sigma_0 * check)))
+        Some(("s_upper_sigma_0", s_upper_sigma_0 * check))
     }
 
     // s_upper_sigma_1 on efgh words
@@ -194,7 +208,7 @@ impl<F: FieldExt> CompressionGate<F> {
         spread_b_hi: Expression<F>,
         spread_c: Expression<F>,
         spread_d: Expression<F>,
-    ) -> impl Iterator<Item = (&'static str, Expression<F>)> {
+    ) -> Option<(&'static str, Expression<F>)> {
         let spread_witness = spread_r0_even
             + spread_r0_odd * F::from(2)
             + (spread_r1_even + spread_r1_odd * F::from(2)) * F::from(1 << 32);
@@ -218,9 +232,9 @@ impl<F: FieldExt> CompressionGate<F> {
             + spread_b_hi * F::from(1 << 30)
             + spread_c * F::from(1 << 36);
         let xor = xor_0 + xor_1 + xor_2;
-        let check = spread_witness + (xor * -F::one());
+        let check = spread_witness + (xor * -F::ONE);
 
-        std::iter::empty().chain(Some(("s_upper_sigma_1", s_upper_sigma_1 * check)))
+        Some(("s_upper_sigma_1", s_upper_sigma_1 * check))
     }
 
     // First part of choice gate on (E, F, G), E ∧ F
@@ -235,7 +249,7 @@ impl<F: FieldExt> CompressionGate<F> {
         spread_e_hi: Expression<F>,
         spread_f_lo: Expression<F>,
         spread_f_hi: Expression<F>,
-    ) -> impl Iterator<Item = (&'static str, Expression<F>)> {
+    ) -> Option<(&'static str, Expression<F>)> {
         let lhs_lo = spread_e_lo + spread_f_lo;
         let lhs_hi = spread_e_hi + spread_f_hi;
         let lhs = lhs_lo + lhs_hi * F::from(1 << 32);
@@ -244,9 +258,9 @@ impl<F: FieldExt> CompressionGate<F> {
         let rhs_odd = spread_p0_odd + spread_p1_odd * F::from(1 << 32);
         let rhs = rhs_even + rhs_odd * F::from(2);
 
-        let check = lhs + rhs * -F::one();
+        let check = lhs + rhs * -F::ONE;
 
-        std::iter::empty().chain(Some(("s_ch", s_ch * check)))
+        Some(("s_ch", s_ch * check))
     }
 
     // Second part of Choice gate on (E, F, G), ¬E ∧ G
@@ -263,13 +277,17 @@ impl<F: FieldExt> CompressionGate<F> {
         spread_e_neg_hi: Expression<F>,
         spread_g_lo: Expression<F>,
         spread_g_hi: Expression<F>,
-    ) -> impl Iterator<Item = (&'static str, Expression<F>)> {
+    ) -> Constraints<
+        F,
+        (&'static str, Expression<F>),
+        impl Iterator<Item = (&'static str, Expression<F>)>,
+    > {
         let neg_check = {
             let evens = Self::ones() * F::from(MASK_EVEN_32 as u64);
             // evens - spread_e_lo = spread_e_neg_lo
-            let lo_check = spread_e_neg_lo.clone() + spread_e_lo + (evens.clone() * (-F::one()));
+            let lo_check = spread_e_neg_lo.clone() + spread_e_lo + (evens.clone() * (-F::ONE));
             // evens - spread_e_hi = spread_e_neg_hi
-            let hi_check = spread_e_neg_hi.clone() + spread_e_hi + (evens * (-F::one()));
+            let hi_check = spread_e_neg_hi.clone() + spread_e_hi + (evens * (-F::ONE));
 
             std::iter::empty()
                 .chain(Some(("lo_check", lo_check)))
@@ -284,9 +302,7 @@ impl<F: FieldExt> CompressionGate<F> {
         let rhs_odd = spread_q0_odd + spread_q1_odd * F::from(1 << 32);
         let rhs = rhs_even + rhs_odd * F::from(2);
 
-        neg_check
-            .chain(Some(("s_ch_neg", lhs - rhs)))
-            .map(move |(name, poly)| (name, s_ch_neg.clone() * poly))
+        Constraints::with_selector(s_ch_neg, neg_check.chain(Some(("s_ch_neg", lhs - rhs))))
     }
 
     // Majority gate on (A, B, C)
@@ -303,7 +319,7 @@ impl<F: FieldExt> CompressionGate<F> {
         spread_b_hi: Expression<F>,
         spread_c_lo: Expression<F>,
         spread_c_hi: Expression<F>,
-    ) -> impl Iterator<Item = (&'static str, Expression<F>)> {
+    ) -> Option<(&'static str, Expression<F>)> {
         let maj_even = spread_m_0_even + spread_m_1_even * F::from(1 << 32);
         let maj_odd = spread_m_0_odd + spread_m_1_odd * F::from(1 << 32);
         let maj = maj_even + maj_odd * F::from(2);
@@ -313,7 +329,7 @@ impl<F: FieldExt> CompressionGate<F> {
         let c = spread_c_lo + spread_c_hi * F::from(1 << 32);
         let sum = a + b + c;
 
-        std::iter::empty().chain(Some(("maj", s_maj * (sum - maj))))
+        Some(("maj", s_maj * (sum - maj)))
     }
 
     // s_h_prime to get H' = H + Ch(E, F, G) + s_upper_sigma_1(E) + K + W
@@ -335,7 +351,7 @@ impl<F: FieldExt> CompressionGate<F> {
         k_hi: Expression<F>,
         w_lo: Expression<F>,
         w_hi: Expression<F>,
-    ) -> impl Iterator<Item = (&'static str, Expression<F>)> {
+    ) -> Option<(&'static str, Expression<F>)> {
         let lo = h_lo + ch_lo + ch_neg_lo + sigma_e_lo + k_lo + w_lo;
         let hi = h_hi + ch_hi + ch_neg_hi + sigma_e_hi + k_hi + w_hi;
 
@@ -344,7 +360,7 @@ impl<F: FieldExt> CompressionGate<F> {
 
         let check = sum - (h_prime_carry * F::from(1 << 32)) - h_prime;
 
-        std::iter::empty().chain(Some(("s_h_prime", s_h_prime * check)))
+        Some(("s_h_prime", s_h_prime * check))
     }
 
     // s_a_new to get A_new = H' + Maj(A, B, C) + s_upper_sigma_0(A)
@@ -360,7 +376,7 @@ impl<F: FieldExt> CompressionGate<F> {
         maj_abc_hi: Expression<F>,
         h_prime_lo: Expression<F>,
         h_prime_hi: Expression<F>,
-    ) -> impl Iterator<Item = (&'static str, Expression<F>)> {
+    ) -> Option<(&'static str, Expression<F>)> {
         let lo = sigma_a_lo + maj_abc_lo + h_prime_lo;
         let hi = sigma_a_hi + maj_abc_hi + h_prime_hi;
         let sum = lo + hi * F::from(1 << 16);
@@ -368,7 +384,7 @@ impl<F: FieldExt> CompressionGate<F> {
 
         let check = sum - (a_new_carry * F::from(1 << 32)) - a_new;
 
-        std::iter::empty().chain(Some(("s_a_new", s_a_new * check)))
+        Some(("s_a_new", s_a_new * check))
     }
 
     // s_e_new to get E_new = H' + D
@@ -382,7 +398,7 @@ impl<F: FieldExt> CompressionGate<F> {
         d_hi: Expression<F>,
         h_prime_lo: Expression<F>,
         h_prime_hi: Expression<F>,
-    ) -> impl Iterator<Item = (&'static str, Expression<F>)> {
+    ) -> Option<(&'static str, Expression<F>)> {
         let lo = h_prime_lo + d_lo;
         let hi = h_prime_hi + d_hi;
         let sum = lo + hi * F::from(1 << 16);
@@ -390,7 +406,7 @@ impl<F: FieldExt> CompressionGate<F> {
 
         let check = sum - (e_new_carry * F::from(1 << 32)) - e_new;
 
-        std::iter::empty().chain(Some(("s_e_new", s_e_new * check)))
+        Some(("s_e_new", s_e_new * check))
     }
 
     // s_digest on final round
@@ -409,17 +425,19 @@ impl<F: FieldExt> CompressionGate<F> {
         lo_3: Expression<F>,
         hi_3: Expression<F>,
         word_3: Expression<F>,
-    ) -> impl Iterator<Item = (&'static str, Expression<F>)> {
+    ) -> impl IntoIterator<Item = Constraint<F>> {
         let check_lo_hi = |lo: Expression<F>, hi: Expression<F>, word: Expression<F>| {
             lo + hi * F::from(1 << 16) - word
         };
 
-        array::IntoIter::new([
-            ("check_lo_hi_0", check_lo_hi(lo_0, hi_0, word_0)),
-            ("check_lo_hi_1", check_lo_hi(lo_1, hi_1, word_1)),
-            ("check_lo_hi_2", check_lo_hi(lo_2, hi_2, word_2)),
-            ("check_lo_hi_3", check_lo_hi(lo_3, hi_3, word_3)),
-        ])
-        .map(move |(name, poly)| (name, s_digest.clone() * poly))
+        Constraints::with_selector(
+            s_digest,
+            [
+                ("check_lo_hi_0", check_lo_hi(lo_0, hi_0, word_0)),
+                ("check_lo_hi_1", check_lo_hi(lo_1, hi_1, word_1)),
+                ("check_lo_hi_2", check_lo_hi(lo_2, hi_2, word_2)),
+                ("check_lo_hi_3", check_lo_hi(lo_3, hi_3, word_3)),
+            ],
+        )
     }
 }

@@ -1,4 +1,4 @@
-//! The Sinsemilla hash function and commitment scheme.
+//! Implementation of Sinsemilla outside the circuit.
 
 use group::{Curve, Wnaf};
 use halo2_proofs::arithmetic::{CurveAffine, CurveExt};
@@ -249,7 +249,10 @@ mod tests {
 
     #[test]
     fn pad() {
-        assert_eq!(Pad::new([].iter().cloned()).collect::<Vec<_>>(), vec![]);
+        assert_eq!(
+            Pad::new([].iter().cloned()).collect::<Vec<_>>(),
+            vec![false; 0]
+        );
         assert_eq!(
             Pad::new([true].iter().cloned()).collect::<Vec<_>>(),
             vec![true, false, false, false, false, false, false, false, false, false]

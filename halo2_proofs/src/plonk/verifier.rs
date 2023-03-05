@@ -1,18 +1,22 @@
 use ff::Field;
 use group::Curve;
-use rand_core::RngCore;
 use std::iter;
 
 use super::{
     vanishing, ChallengeBeta, ChallengeGamma, ChallengeTheta, ChallengeX, ChallengeY, Error,
     VerifyingKey,
 };
-use crate::arithmetic::{CurveAffine, FieldExt};
+use crate::arithmetic::CurveAffine;
 use crate::poly::{
     commitment::{Blind, Guard, Params, MSM},
     multiopen::{self, VerifierQuery},
 };
 use crate::transcript::{read_n_points, read_n_scalars, EncodedChallenge, TranscriptRead};
+
+#[cfg(feature = "batch")]
+mod batch;
+#[cfg(feature = "batch")]
+pub use batch::BatchVerifier;
 
 /// Trait representing a strategy for verifying Halo 2 proofs.
 pub trait VerificationStrategy<'params, C: CurveAffine> {
@@ -59,52 +63,6 @@ impl<'params, C: CurveAffine> VerificationStrategy<'params, C> for SingleVerifie
     }
 }
 
-/// A verifier that checks multiple proofs in a batch.
-#[derive(Debug)]
-pub struct BatchVerifier<'params, C: CurveAffine, R: RngCore> {
-    msm: MSM<'params, C>,
-    rng: R,
-}
-
-impl<'params, C: CurveAffine, R: RngCore> BatchVerifier<'params, C, R> {
-    /// Constructs a new batch verifier.
-    pub fn new(params: &'params Params<C>, rng: R) -> Self {
-        BatchVerifier {
-            msm: MSM::new(params),
-            rng,
-        }
-    }
-
-    /// Finalizes the batch and checks its validity.
-    ///
-    /// Returns `false` if *some* proof was invalid. If the caller needs to identify
-    /// specific failing proofs, it must re-process the proofs separately.
-    #[must_use]
-    pub fn finalize(self) -> bool {
-        self.msm.eval()
-    }
-}
-
-impl<'params, C: CurveAffine, R: RngCore> VerificationStrategy<'params, C>
-    for BatchVerifier<'params, C, R>
-{
-    type Output = Self;
-
-    fn process<E: EncodedChallenge<C>>(
-        mut self,
-        f: impl FnOnce(MSM<'params, C>) -> Result<Guard<'params, C, E>, Error>,
-    ) -> Result<Self::Output, Error> {
-        // Scale the MSM by a random factor to ensure that if the existing MSM
-        // has is_zero() == false then this argument won't be able to interfere
-        // with it to make it true, with high probability.
-        self.msm.scale(C::Scalar::random(&mut self.rng));
-
-        let guard = f(self.msm)?;
-        let msm = guard.use_challenges();
-        Ok(Self { msm, rng: self.rng })
-    }
-}
-
 /// Returns a boolean indicating whether or not the proof is valid
 pub fn verify_proof<
     'params,
@@ -136,7 +94,7 @@ pub fn verify_proof<
                         return Err(Error::InstanceTooLarge);
                     }
                     let mut poly = instance.to_vec();
-                    poly.resize(params.n as usize, C::Scalar::zero());
+                    poly.resize(params.n as usize, C::Scalar::ZERO);
                     let poly = vk.domain.lagrange_from_vec(poly);
 
                     Ok(params.commit_lagrange(&poly, Blind::default()).to_affine())
@@ -245,7 +203,7 @@ pub fn verify_proof<
     // commitments open to the correct values.
     let vanishing = {
         // x^n
-        let xn = x.pow(&[params.n as u64, 0, 0, 0]);
+        let xn = x.pow(&[params.n, 0, 0, 0]);
 
         let blinding_factors = vk.cs.blinding_factors();
         let l_evals = vk
@@ -255,7 +213,7 @@ pub fn verify_proof<
         let l_last = l_evals[0];
         let l_blind: C::Scalar = l_evals[1..(1 + blinding_factors)]
             .iter()
-            .fold(C::Scalar::zero(), |acc, eval| acc + eval);
+            .fold(C::Scalar::ZERO, |acc, eval| acc + eval);
         let l_0 = l_evals[1 + blinding_factors];
 
         // Compute the expected value of h(x)
@@ -273,9 +231,9 @@ pub fn verify_proof<
                             poly.evaluate(
                                 &|scalar| scalar,
                                 &|_| panic!("virtual selectors are removed during optimization"),
-                                &|index, _, _| fixed_evals[index],
-                                &|index, _, _| advice_evals[index],
-                                &|index, _, _| instance_evals[index],
+                                &|query| fixed_evals[query.index],
+                                &|query| advice_evals[query.index],
+                                &|query| instance_evals[query.index],
                                 &|a| -a,
                                 &|a, b| a + &b,
                                 &|a, b| a * &b,

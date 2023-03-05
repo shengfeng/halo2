@@ -6,12 +6,12 @@
 //! [plonk]: https://eprint.iacr.org/2019/953
 
 use blake2b_simd::Params as Blake2bParams;
+use group::ff::{Field, FromUniformBytes, PrimeField};
 
-use crate::arithmetic::{CurveAffine, FieldExt};
-use crate::helpers::CurveRead;
+use crate::arithmetic::CurveAffine;
 use crate::poly::{
-    commitment::Params, Coeff, EvaluationDomain, ExtendedLagrangeCoeff, LagrangeCoeff,
-    PinnedEvaluationDomain, Polynomial,
+    Coeff, EvaluationDomain, ExtendedLagrangeCoeff, LagrangeCoeff, PinnedEvaluationDomain,
+    Polynomial,
 };
 use crate::transcript::{ChallengeScalar, EncodedChallenge, Transcript};
 
@@ -37,12 +37,56 @@ use std::io;
 
 /// This is a verifying key which allows for the verification of proofs for a
 /// particular circuit.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct VerifyingKey<C: CurveAffine> {
     domain: EvaluationDomain<C::Scalar>,
     fixed_commitments: Vec<C>,
     permutation: permutation::VerifyingKey<C>,
     cs: ConstraintSystem<C::Scalar>,
+    /// Cached maximum degree of `cs` (which doesn't change after construction).
+    cs_degree: usize,
+    /// The representative of this `VerifyingKey` in transcripts.
+    transcript_repr: C::Scalar,
+}
+
+impl<C: CurveAffine> VerifyingKey<C>
+where
+    C::Scalar: FromUniformBytes<64>,
+{
+    fn from_parts(
+        domain: EvaluationDomain<C::Scalar>,
+        fixed_commitments: Vec<C>,
+        permutation: permutation::VerifyingKey<C>,
+        cs: ConstraintSystem<C::Scalar>,
+    ) -> Self {
+        // Compute cached values.
+        let cs_degree = cs.degree();
+
+        let mut vk = Self {
+            domain,
+            fixed_commitments,
+            permutation,
+            cs,
+            cs_degree,
+            // Temporary, this is not pinned.
+            transcript_repr: C::Scalar::ZERO,
+        };
+
+        let mut hasher = Blake2bParams::new()
+            .hash_length(64)
+            .personal(b"Halo2-Verify-Key")
+            .to_state();
+
+        let s = format!("{:?}", vk.pinned());
+
+        hasher.update(&(s.len() as u64).to_le_bytes());
+        hasher.update(s.as_bytes());
+
+        // Hash in final Blake2bState
+        vk.transcript_repr = C::Scalar::from_uniform_bytes(hasher.finalize().as_array());
+
+        vk
+    }
 }
 
 impl<C: CurveAffine> VerifyingKey<C> {
@@ -51,18 +95,7 @@ impl<C: CurveAffine> VerifyingKey<C> {
         &self,
         transcript: &mut T,
     ) -> io::Result<()> {
-        let mut hasher = Blake2bParams::new()
-            .hash_length(64)
-            .personal(b"Halo2-Verify-Key")
-            .to_state();
-
-        let s = format!("{:?}", self.pinned());
-
-        hasher.update(&(s.len() as u64).to_le_bytes());
-        hasher.update(s.as_bytes());
-
-        // Hash in final Blake2bState
-        transcript.common_scalar(C::Scalar::from_bytes_wide(hasher.finalize().as_array()))?;
+        transcript.common_scalar(self.transcript_repr)?;
 
         Ok(())
     }
@@ -95,7 +128,7 @@ pub struct PinnedVerificationKey<'a, C: CurveAffine> {
 }
 /// This is a proving key which allows for the creation of proofs for a
 /// particular circuit.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ProvingKey<C: CurveAffine> {
     vk: VerifyingKey<C>,
     l0: Polynomial<C::Scalar, ExtendedLagrangeCoeff>,

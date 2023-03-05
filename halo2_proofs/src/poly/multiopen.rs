@@ -6,10 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
-use crate::{
-    arithmetic::{CurveAffine, FieldExt},
-    transcript::ChallengeScalar,
-};
+use crate::{arithmetic::CurveAffine, transcript::ChallengeScalar};
 
 mod prover;
 mod verifier;
@@ -84,6 +81,7 @@ impl<'r, 'params: 'r, C: CurveAffine> VerifierQuery<'r, 'params, C> {
     }
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Copy, Clone, Debug)]
 enum CommitmentReference<'r, 'params: 'r, C: CurveAffine> {
     Commitment(&'r C),
@@ -135,7 +133,7 @@ type IntermediateSets<F, Q> = (
     Vec<Vec<F>>,
 );
 
-fn construct_intermediate_sets<F: FieldExt, I, Q: Query<F>>(queries: I) -> IntermediateSets<F, Q>
+fn construct_intermediate_sets<F: Field + Ord, I, Q: Query<F>>(queries: I) -> IntermediateSets<F, Q>
 where
     I: IntoIterator<Item = Q> + Clone,
 {
@@ -253,7 +251,7 @@ fn test_roundtrip() {
     use rand_core::OsRng;
 
     use super::commitment::{Blind, Params};
-    use crate::arithmetic::{eval_polynomial, FieldExt};
+    use crate::arithmetic::eval_polynomial;
     use crate::pasta::{EqAffine, Fp};
     use crate::transcript::Challenge255;
 
@@ -361,9 +359,7 @@ fn test_roundtrip() {
 
 #[cfg(test)]
 mod tests {
-    use super::{construct_intermediate_sets, Query};
-    use crate::arithmetic::FieldExt;
-    use crate::pasta::Fp;
+    use super::Query;
 
     #[derive(Clone)]
     struct MyQuery<F> {
@@ -390,18 +386,12 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    use proptest::{
-        collection::vec,
-        prelude::*,
-        sample::{select, subsequence},
-        strategy::Strategy,
-    };
+    use group::ff::FromUniformBytes;
+    use proptest::{collection::vec, prelude::*, sample::select};
 
     use super::construct_intermediate_sets;
-    use crate::poly::Rotation;
-    use pasta_curves::{arithmetic::FieldExt, Fp};
+    use pasta_curves::Fp;
 
-    use std::collections::BTreeMap;
     use std::convert::TryFrom;
 
     #[derive(Debug, Clone)]
@@ -432,7 +422,7 @@ mod proptests {
         fn arb_point()(
             bytes in vec(any::<u8>(), 64)
         ) -> Fp {
-            Fp::from_bytes_wide(&<[u8; 64]>::try_from(bytes).unwrap())
+            Fp::from_uniform_bytes(&<[u8; 64]>::try_from(bytes).unwrap())
         }
     }
 

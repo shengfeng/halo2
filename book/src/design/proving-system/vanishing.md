@@ -21,7 +21,7 @@ $d(n - 1)$ with respect to $X$.
 
 A relation is satisfied if its polynomial is equal to zero. One way to demonstrate this is
 to divide each polynomial relation by the vanishing polynomial $t(X) = (X^n - 1)$, which
-is the lowest-degree monomial that has roots at every $\omega^i$. If relation's polynomial
+is the lowest-degree polynomial that has roots at every $\omega^i$. If relation's polynomial
 is perfectly divisible by $t(X)$, it is equal to zero over the domain (as desired).
 
 This simple construction would require a polynomial commitment per relation. Instead, we
@@ -41,7 +41,7 @@ verifier samples $y$) linear combination of the circuit relations.
 
 ## Committing to $h(X)$
 
-$h(X)$ has degree $(d - 1)n - d$ (because the divisor $t(X)$ has degree $n$). However, the
+$h(X)$ has degree $d(n - 1) - n$ (because the divisor $t(X)$ has degree $n$). However, the
 polynomial commitment scheme we use for Halo 2 only supports committing to polynomials of
 degree $n - 1$ (which is the maximum degree that the rest of the protocol needs to commit
 to). Instead of increasing the cost of the polynomial commitment scheme, the prover split

@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use ff::Field;
+use ff::{Field, FromUniformBytes};
 use group::Curve;
 
 use super::{
@@ -12,11 +12,15 @@ use super::{
     },
     permutation, Assigned, Error, LagrangeCoeff, Polynomial, ProvingKey, VerifyingKey,
 };
-use crate::poly::{
-    commitment::{Blind, Params},
-    EvaluationDomain,
+use crate::{
+    arithmetic::CurveAffine,
+    circuit::Value,
+    poly::{
+        batch_invert_assigned,
+        commitment::{Blind, Params},
+        EvaluationDomain,
+    },
 };
-use crate::{arithmetic::CurveAffine, poly::batch_invert_assigned};
 
 pub(crate) fn create_domain<C, ConcreteCircuit>(
     params: &Params<C>,
@@ -78,13 +82,13 @@ impl<F: Field> Assignment<F> for Assembly<F> {
         Ok(())
     }
 
-    fn query_instance(&self, _: Column<Instance>, row: usize) -> Result<Option<F>, Error> {
+    fn query_instance(&self, _: Column<Instance>, row: usize) -> Result<Value<F>, Error> {
         if !self.usable_rows.contains(&row) {
             return Err(Error::not_enough_rows_available(self.k));
         }
 
         // There is no instance in this context.
-        Ok(None)
+        Ok(Value::unknown())
     }
 
     fn assign_advice<V, VR, A, AR>(
@@ -95,7 +99,7 @@ impl<F: Field> Assignment<F> for Assembly<F> {
         _: V,
     ) -> Result<(), Error>
     where
-        V: FnOnce() -> Result<VR, Error>,
+        V: FnOnce() -> Value<VR>,
         VR: Into<Assigned<F>>,
         A: FnOnce() -> AR,
         AR: Into<String>,
@@ -112,7 +116,7 @@ impl<F: Field> Assignment<F> for Assembly<F> {
         to: V,
     ) -> Result<(), Error>
     where
-        V: FnOnce() -> Result<VR, Error>,
+        V: FnOnce() -> Value<VR>,
         VR: Into<Assigned<F>>,
         A: FnOnce() -> AR,
         AR: Into<String>,
@@ -125,7 +129,7 @@ impl<F: Field> Assignment<F> for Assembly<F> {
             .fixed
             .get_mut(column.index())
             .and_then(|v| v.get_mut(row))
-            .ok_or(Error::BoundsFailure)? = to()?.into();
+            .ok_or(Error::BoundsFailure)? = to().into_field().assign()?;
 
         Ok(())
     }
@@ -149,7 +153,7 @@ impl<F: Field> Assignment<F> for Assembly<F> {
         &mut self,
         column: Column<Fixed>,
         from_row: usize,
-        to: Option<Assigned<F>>,
+        to: Value<Assigned<F>>,
     ) -> Result<(), Error> {
         if !self.usable_rows.contains(&from_row) {
             return Err(Error::not_enough_rows_available(self.k));
@@ -160,8 +164,9 @@ impl<F: Field> Assignment<F> for Assembly<F> {
             .get_mut(column.index())
             .ok_or(Error::BoundsFailure)?;
 
+        let filler = to.assign()?;
         for row in self.usable_rows.clone().skip(from_row) {
-            col[row] = to.ok_or(Error::Synthesis)?;
+            col[row] = filler;
         }
 
         Ok(())
@@ -187,6 +192,7 @@ pub fn keygen_vk<C, ConcreteCircuit>(
 ) -> Result<VerifyingKey<C>, Error>
 where
     C: CurveAffine,
+    C::Scalar: FromUniformBytes<64>,
     ConcreteCircuit: Circuit<C::Scalar>,
 {
     let (domain, cs, config) = create_domain::<C, ConcreteCircuit>(params);
@@ -229,12 +235,12 @@ where
         .map(|poly| params.commit_lagrange(poly, Blind::default()).to_affine())
         .collect();
 
-    Ok(VerifyingKey {
+    Ok(VerifyingKey::from_parts(
         domain,
         fixed_commitments,
-        permutation: permutation_vk,
+        permutation_vk,
         cs,
-    })
+    ))
 }
 
 /// Generate a `ProvingKey` from a `VerifyingKey` and an instance of `Circuit`.
@@ -298,7 +304,7 @@ where
     // Compute l_0(X)
     // TODO: this can be done more efficiently
     let mut l0 = vk.domain.empty_lagrange();
-    l0[0] = C::Scalar::one();
+    l0[0] = C::Scalar::ONE;
     let l0 = vk.domain.lagrange_to_coeff(l0);
     let l0 = vk.domain.coeff_to_extended(l0);
 
@@ -306,7 +312,7 @@ where
     // and 0 otherwise over the domain.
     let mut l_blind = vk.domain.empty_lagrange();
     for evaluation in l_blind[..].iter_mut().rev().take(cs.blinding_factors()) {
-        *evaluation = C::Scalar::one();
+        *evaluation = C::Scalar::ONE;
     }
     let l_blind = vk.domain.lagrange_to_coeff(l_blind);
     let l_blind = vk.domain.coeff_to_extended(l_blind);
@@ -314,7 +320,7 @@ where
     // Compute l_last(X) which evaluates to 1 on the first inactive row (just
     // before the blinding factors) and 0 otherwise over the domain
     let mut l_last = vk.domain.empty_lagrange();
-    l_last[params.n as usize - cs.blinding_factors() - 1] = C::Scalar::one();
+    l_last[params.n as usize - cs.blinding_factors() - 1] = C::Scalar::ONE;
     let l_last = vk.domain.lagrange_to_coeff(l_last);
     let l_last = vk.domain.coeff_to_extended(l_last);
 

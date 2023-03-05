@@ -88,7 +88,7 @@ for i from 2 down to 0 {
 return (k_0 = 0) ? (Acc + (-T)) : Acc  // complete addition
 ```
 
-## Constraint program for optimized double-and-add (incomplete addition)
+## Constraint program for optimized double-and-add
 Define a running sum $\mathbf{z_j} = \sum_{i=j}^{n} (\mathbf{k}_{i} \cdot 2^{i-j})$, where $n = 254$ and:
 
 $$
@@ -108,13 +108,13 @@ $\begin{array}{l}
 \hspace{1.5em} x_{P,i} = x_T \\
 \hspace{1.5em} y_{P,i} = (2 \mathbf{k}_i - 1) \cdot y_T  \hspace{2em}\text{(conditionally negate)} \\
 \hspace{1.5em} \lambda_{1,i} \cdot (x_{A,i} - x_{P,i}) = y_{A,i} - y_{P,i} \\
-\hspace{1.5em} \lambda_{1,i}^2 = x_{R,i} + x_{A,i} + x_{P,i} \\
+\hspace{1.5em} x_{R,i} = \lambda_{1,i}^2 - x_{A,i} - x_{P,i} \\
 \hspace{1.5em} (\lambda_{1,i} + \lambda_{2,i}) \cdot (x_{A,i} - x_{R,i}) = 2 y_{\mathsf{A},i} \\
 \hspace{1.5em} \lambda_{2,i}^2 = x_{A,i-1} + x_{R,i} + x_{A,i} \\
-\hspace{1.5em} \lambda_{2,i} \cdot (x_{A,i} - x_{A,i-1}) = y_{A,i} + y_{A,i-1}, \\
+\hspace{1.5em} \lambda_{2,i} \cdot (x_{A,i} - x_{A,i-1}) = y_{A,i} + y_{A,i-1}. \\
 \end{array}$
 
-where $x_{R,i} = (\lambda_{1,i}^2 - x_{A,i} - x_T).$ The helper $\BoolCheck{x} = x \cdot (1 - x)$.
+The helper $\BoolCheck{x} = x \cdot (1 - x)$.
 After substitution of $x_{P,i}, y_{P,i}, x_{R,i}, y_{A,i}$, and $y_{A,i-1}$, this becomes:
 
 $\begin{array}{l}
@@ -154,8 +154,8 @@ Output $(x_{A,0}, y_{A,0}) + B$.
 
 (Note that $(0, 0)$ represents $\mathcal{O}$.)
 
+## Incomplete addition
 
-### Circuit design
 We need six advice columns to witness $(x_T, y_T, \lambda_1, \lambda_2, x_{A,i}, \mathbf{z}_i)$. However, since $(x_T, y_T)$ are the same, we can perform two incomplete additions in a single row, reusing the same $(x_T, y_T)$. We split the scalar bits used in incomplete addition into $hi$ and $lo$ halves and process them in parallel. This means that we effectively have two for loops:
 - the first, covering the $hi$ half for $i$ from $254$ down to $130$, with a special case at $i = 130$; and
 - the second, covering the $lo$ half for the remaining $i$ from $129$ down to $4$, with a special case at $i = 4$.
@@ -169,7 +169,7 @@ $$
     x_T     &    y_T      &    \mathbf{z}_{253}       &     x_{A,253}      & \lambda_{1,253}  & \lambda_{2,253}  &     0      &     1       &     0      &   \mathbf{z}_{128}    & x_{A,128}   & \lambda_{1,128}     & \lambda_{2,128}   &     0      &     1       &     0      \\\hline
    \vdots   &   \vdots    &         \vdots            &      \vdots        &      \vdots      &      \vdots      &   \vdots   &   \vdots    &   \vdots   &        \vdots         &  \vdots     &      \vdots         &      \vdots       &   \vdots   &   \vdots    &   \vdots   \\\hline
     x_T     &    y_T      &    \mathbf{z}_{130}       &     x_{A,130}      & \lambda_{1,130}  & \lambda_{2,130}  &     0      &     0       &     1      &   \mathbf{z}_5        & x_{A,5}     & \lambda_{1,5}       & \lambda_{2,5}     &     0      &     1       &     0      \\\hline
-            &             &                           &     x_{A,129}      &    y_{A,129}     &                  &            &             &            &   \mathbf{z}_4        & x_{A,4}     & \lambda_{1,4}       & \lambda_{2,4}     &     0      &     0       &     1      \\\hline
+    x_T     &    y_T      &                           &     x_{A,129}      &    y_{A,129}     &                  &            &             &            &   \mathbf{z}_4        & x_{A,4}     & \lambda_{1,4}       & \lambda_{2,4}     &     0      &     0       &     1      \\\hline
             &             &                           &                    &                  &                  &            &             &            &                       & x_{A,3}     &     y_{A,3}         &                   &            &             &            \\\hline
 
 \end{array}
@@ -177,13 +177,13 @@ $$
 
 For each $hi$ and $lo$ half, we have three sets of gates. Note that $i$ is going from $255..=3$; $i$ is NOT indexing the rows.
 
-#### $q_1 = 1$
+### $q_1 = 1$ <a name="incomplete-first-row-gate">
 This gate is only used on the first row (before the for loop). We check that $\lambda_1, \lambda_2$ are initialized to values consistent with the initial $y_A.$
 $$
 \begin{array}{|c|l|}
 \hline
 \text{Degree} & \text{Constraint} \\\hline
-3 & q_1 \cdot \left(y_{A,n}^\text{witnessed} - y_{A,n}\right) = 0 \\\hline
+4 & q_1 \cdot \left(y_{A,n}^\text{witnessed} - y_{A,n}\right) = 0 \\\hline
 \end{array}
 $$
 where
@@ -194,7 +194,7 @@ y_{A,n}^\text{witnessed} &\text{ is witnessed.}
 \end{aligned}
 $$
 
-#### $q_2 = 1$
+### $q_2 = 1$ <a name="incomplete-main-loop-gate">
 This gate is used on all rows corresponding to the for loop except the last.
 
 $$
@@ -205,19 +205,20 @@ $$
 2 & q_2 \cdot \left(y_{T,cur} - y_{T,next}\right) = 0 \\\hline
 3 & q_2 \cdot \BoolCheck{\mathbf{k}_i} = 0, \text{ where } \mathbf{k}_i = \mathbf{z}_{i} - 2\mathbf{z}_{i+1} \\\hline
 4 & q_2 \cdot \left(\lambda_{1,i} \cdot (x_{A,i} - x_{T,i}) - y_{A,i} + (2\mathbf{k}_i - 1) \cdot y_{T,i}\right) = 0 \\\hline
-3 & q_2 \cdot \left(\lambda_{2,i}^2 - x_{A,i-1} - \lambda_{1,i}^2 + x_{T,i}\right) = 0 \\\hline
+3 & q_2 \cdot \left(\lambda_{2,i}^2 - x_{A,i-1} - x_{R,i} - x_{A,i}\right) = 0 \\\hline
 3 & q_2 \cdot \left(\lambda_{2,i} \cdot (x_{A,i} - x_{A,i-1}) - y_{A,i} - y_{A,i-1}\right) = 0 \\\hline
 \end{array}
 $$
 where
 $$
 \begin{aligned}
+x_{R,i} &= \lambda_{1,i}^2 - x_{A,i} - x_T, \\
 y_{A,i} &= \frac{(\lambda_{1,i} + \lambda_{2,i}) \cdot (x_{A,i} - (\lambda_{1,i}^2 - x_{A,i} - x_T))}{2}, \\
 y_{A,i-1} &= \frac{(\lambda_{1,i-1} + \lambda_{2,i-1}) \cdot (x_{A,i-1} - (\lambda_{1,i-1}^2 - x_{A,i-1} - x_T))}{2}, \\
 \end{aligned}
 $$
 
-#### $q_3 = 1$
+### $q_3 = 1$ <a name="incomplete-last-row-gate">
 This gate is used on the final iteration of the for loop, handling the special case where we check that the output $y_A$ has been witnessed correctly.
 $$
 \begin{array}{|c|l|}
@@ -225,17 +226,79 @@ $$
 \text{Degree} & \text{Constraint} \\\hline
 3 & q_3 \cdot \BoolCheck{\mathbf{k}_i} = 0, \text{ where } \mathbf{k}_i = \mathbf{z}_{i} - 2\mathbf{z}_{i+1} \\\hline
 4 & q_3 \cdot \left(\lambda_{1,i} \cdot (x_{A,i} - x_{T,i}) - y_{A,i} + (2\mathbf{k}_i - 1) \cdot y_{T,i}\right) = 0 \\\hline
-3 & q_3 \cdot \left(\lambda_{2,i}^2 - x_{A,i-1} - \lambda_{1,i}^2 + x_{T,i}\right) = 0 \\\hline
+3 & q_3 \cdot \left(\lambda_{2,i}^2 - x_{A,i-1} - x_{R,i} - x_{A,i}\right) = 0 \\\hline
 3 & q_3 \cdot \left(\lambda_{2,i} \cdot (x_{A,i} - x_{A,i-1}) - y_{A,i} - y_{A,i-1}^\text{witnessed}\right) = 0 \\\hline
 \end{array}
 $$
 where
 $$
 \begin{aligned}
+x_{R,i} &= \lambda_{1,i}^2 - x_{A,i} - x_T, \\
 y_{A,i} &= \frac{(\lambda_{1,i} + \lambda_{2,i}) \cdot (x_{A,i} - (\lambda_{1,i}^2 - x_{A,i} - x_T))}{2},\\
 y_{A,i-1}^\text{witnessed} &\text{ is witnessed.}
 \end{aligned}
 $$
+
+## Complete addition
+
+We reuse the [complete addition](addition.md#complete-addition) constraints to implement
+the final $c$ rounds of double-and-add. This requires two rows per round because we need
+9 advice columns for each complete addition. In the 10th advice column we stash the other
+cells that we need to correctly implement the double-and-add:
+
+- The base $y$ coordinate, so we can conditionally negate it as input to one of the
+  complete additions.
+- The running sum, which we constrain over two rows instead of sequentially.
+
+### Layout
+
+$$
+\begin{array}{|c|c|c|c|c|c|c|c|c|c|c|}
+a_0 & a_1 & a_2 & a_3 &    a_4    &   a_5    &   a_6   &   a_7    &   a_8    & a_9     & q_\texttt{mul\_decompose\_var} \\\hline
+x_T & y_p & x_A & y_A & \lambda_1 & \alpha_1 & \beta_1 & \gamma_1 & \delta_1 & z_{i+1} & 0 \\\hline
+x_A & y_A & x_q & y_q & \lambda_2 & \alpha_2 & \beta_2 & \gamma_2 & \delta_2 & y_T     & 1 \\\hline
+    &     & x_r & y_r &           &          &         &          &          & z_i     & 0 \\\hline
+\end{array}
+$$
+
+### Constraints <a name="complete-gate">
+
+In addition to the complete addition constraints, we define the following gate:
+
+$$
+\begin{array}{|c|l|}
+\hline
+\text{Degree} & \text{Constraint} \\\hline
+  & q_\texttt{mul\_decompose\_var} \cdot \BoolCheck{\mathbf{k}_i} = 0 \\\hline
+  & q_\texttt{mul\_decompose\_var} \cdot \Ternary{\mathbf{k}_i}{y_T - y_p}{y_T + y_p} = 0 \\\hline
+\end{array}
+$$
+where $\mathbf{k}_i = \mathbf{z}_{i} - 2\mathbf{z}_{i+1}$.
+
+## LSB
+
+### Layout
+
+$$
+\begin{array}{|c|c|c|c|c|c|c|c|c|c|c|}
+a_0 & a_1 & a_2 & a_3 &   a_4   &  a_5   &  a_6  &  a_7   &  a_8   & a_9 & q_\texttt{mul\_lsb} \\\hline
+x_p & y_p & x_A & y_A & \lambda & \alpha & \beta & \gamma & \delta & z_1 & 1 \\\hline
+x_T & y_T & x_r & y_r &         &        &       &        &        & z_0 & 0 \\\hline
+\end{array}
+$$
+
+### Constraints <a name="lsb-gate">
+
+$$
+\begin{array}{|c|l|}
+\hline
+\text{Degree} & \text{Constraint} \\\hline
+  & q_\texttt{mul\_lsb} \cdot \BoolCheck{\mathbf{k}_0} = 0 \\\hline
+  & q_\texttt{mul\_lsb} \cdot \Ternary{\mathbf{k}_0}{x_p}{x_p - x_T} = 0 \\\hline
+  & q_\texttt{mul\_lsb} \cdot \Ternary{\mathbf{k}_0}{y_p}{y_p + y_T} = 0 \\\hline
+\end{array}
+$$
+where $\mathbf{k}_0 = \mathbf{z}_0 - 2\mathbf{z}_1$.
 
 ## Overflow check
 
@@ -243,15 +306,24 @@ $\mathbf{z}_i$ cannot overflow for any $i \geq 1$, because it is a weighted sum 
 
 However, $\mathbf{z}_0 = \alpha + t_q$ *can* overflow $[0, p)$.
 
+> Note: for full-width scalar mul, it may not be possible to represent $\mathbf{z}_0$ in the base field (e.g. when the base field is Pasta's $\mathbb{F}_p$ and $p < q$).
+> In that case, we need to special-case the row that would mention $\mathbf{z}_0$ so that it is correct for whatever representation we use for a full-width scalar.
+> Our representation for $k$ will be the pair $(\mathbb{k}_{254}, k' = k - 2^{254} \cdot \mathbb{k}_{254})$.
+> We'll use $k'$ in place of $\alpha + t_q$ for $\mathbf{z}_0$, constraining $k'$ to 254 bits so that it fits in an $\mathbb{F}_p$ element.
+> Then we just have to generalize the argument below to work for $k' \in [0, 2 \cdot t_q)$ (because the maximum value of $\alpha + t_q$ is $q - 1 + t_q = 2^{254} + t_q - 1 + t_q$).
+
 Since overflow can only occur in the final step that constrains $\mathbf{z}_0 = 2 \cdot \mathbf{z}_1 + \mathbf{k}_0$, we have $\mathbf{z}_0 = k \pmod{p}$. It is then sufficient to also check that $\mathbf{z}_0 = \alpha + t_q \pmod{p}$ (so that $k = \alpha + t_q \pmod{p}$) and that $k \in [t_q, p + t_q)$. These conditions together imply that $k = \alpha + t_q$ as an integer, and so $2^{254} + k = \alpha \pmod{q}$ as required.
 
 > Note: the bits $\mathbf{k}_{254..0}$ do not represent a value reduced modulo $q$, but rather a representation of the unreduced $\alpha + t_q$.
 
 ### Optimized check for $k \in [t_q, p + t_q)$
 
-Since $t_p + t_q < 2^{130}$, we have $$[t_q, p + t_q) = [t_q, t_q + 2^{130}) \;\cup\; [2^{130}, 2^{254}) \;\cup\; \big([2^{254}, 2^{254} + 2^{130}) \;\cap\; [p + t_q - 2^{130}, p + t_q)\big).$$
+Since $t_p + t_q < 2^{130}$ (also true if $p$ and $q$ are swapped), we have $$[t_q, p + t_q) = [t_q, t_q + 2^{130}) \;\cup\; [2^{130}, 2^{254}) \;\cup\; \big([2^{254}, 2^{254} + 2^{130}) \;\cap\; [p + t_q - 2^{130}, p + t_q)\big).$$
 
 We may assume that $k = \alpha + t_q \pmod{p}$.
+
+(This is true for the use of variable-base scalar mul in Orchard, where we know that $\alpha < p$. If is also true if we swap $p$ and $q$ so that we have $p > q$.
+It is *not* true for a full-width scalar $\alpha \geq p$ when $p < q$.)
 
 Therefore,
 $\begin{array}{rcl}
@@ -259,9 +331,9 @@ k \in [t_q, p + t_q) &\Leftrightarrow& \big(k \in [t_q, t_q + 2^{130}) \;\vee\; 
                      &               & \big(k \in [2^{254}, 2^{254} + 2^{130}) \;\wedge\; k \in [p + t_q - 2^{130}, p + t_q)\big) \\
                      \\
                      &\Leftrightarrow& \big(\mathbf{k}_{254} = 0 \implies (k \in [t_q, t_q + 2^{130}) \;\vee\; k \in [2^{130}, 2^{254}))\big) \;\wedge \\
-                     &               & \big(\mathbf{k}_{254} = 1 \implies (k \in [2^{254}, 2^{254} + 2^{130}) \;\wedge\; k \in [p + t_q - 2^{130}, p + t_q)\big) \\
+                     &               & \big(\mathbf{k}_{254} = 1 \implies (k \in [2^{254}, 2^{254} + 2^{130}) \;\wedge\; k \in [p + t_q - 2^{130}, p + t_q))\big) \\
                      \\
-                     &\Leftrightarrow& \big(\mathbf{k}_{254} = 0 \implies (\alpha \in [0, 2^{130}) \;\vee\; k \in [2^{130}, 2^{254})\big) \;\wedge \\
+                     &\Leftrightarrow& \big(\mathbf{k}_{254} = 0 \implies (\alpha \in [0, 2^{130}) \;\vee\; k \in [2^{130}, 2^{254}))\big) \;\wedge \\
                      &               & \big(\mathbf{k}_{254} = 1 \implies (k \in [2^{254}, 2^{254} + 2^{130}) \;\wedge\; (\alpha + 2^{130}) \bmod p \in [0, 2^{130}))\big) \;\;Ⓐ
 \end{array}$
 
@@ -318,14 +390,90 @@ $$
 \begin{array}{|c|l|}
 \hline
 \text{Degree} & \text{Constraint} \\\hline
-2 & \text{q\_mul}^\text{overflow} \cdot \left(s - (\alpha + \mathbf{k}_{254} \cdot 2^{130})\right) = 0 \\\hline
-2 & \text{q\_mul}^\text{overflow} \cdot \left(\mathbf{z}_0 - \alpha - t_q\right) = 0 \\\hline
-3 & \text{q\_mul}^\text{overflow} \cdot \left(\mathbf{k}_{254} \cdot (\mathbf{z}_{130} - 2^{124})\right) = 0 \\\hline
-3 & \text{q\_mul}^\text{overflow} \cdot \left(\mathbf{k}_{254} \cdot (s - \sum\limits_{i=0}^{129} 2^i \cdot \mathbf{s}_i)/2^{130}\right) = 0 \\\hline
-5 & \text{q\_mul}^\text{overflow} \cdot \left((1 - \mathbf{k}_{254}) \cdot (1 - \mathbf{z}_{130} \cdot \eta) \cdot (s - \sum\limits_{i=0}^{129} 2^i \cdot \mathbf{s}_i)/2^{130}\right) = 0 \\\hline
+2 & q_\texttt{mul\_overflow} \cdot \left(s - (\alpha + \mathbf{k}_{254} \cdot 2^{130})\right) = 0 \\\hline
+2 & q_\texttt{mul\_overflow} \cdot \left(\mathbf{z}_0 - \alpha - t_q\right) = 0 \\\hline
+3 & q_\texttt{mul\_overflow} \cdot \left(\mathbf{k}_{254} \cdot (\mathbf{z}_{130} - 2^{124})\right) = 0 \\\hline
+3 & q_\texttt{mul\_overflow} \cdot \left(\mathbf{k}_{254} \cdot (s - \sum\limits_{i=0}^{129} 2^i \cdot \mathbf{s}_i)/2^{130}\right) = 0 \\\hline
+5 & q_\texttt{mul\_overflow} \cdot \left((1 - \mathbf{k}_{254}) \cdot (1 - \mathbf{z}_{130} \cdot \eta) \cdot (s - \sum\limits_{i=0}^{129} 2^i \cdot \mathbf{s}_i)/2^{130}\right) = 0 \\\hline
 \end{array}
 $$
 where $(s - \sum\limits_{i=0}^{129} 2^i \cdot \mathbf{s}_i)/2^{130}$ can be computed by another running sum. Note that the factor of $1/2^{130}$ has no effect on the constraint, since the RHS is zero.
 
 #### Running sum range check
 We make use of a $10$-bit [lookup range check](../decomposition.md#lookup-decomposition) in the circuit to subtract the low $130$ bits of $\mathbf{s}$. The range check subtracts the first $13 \cdot 10$ bits of $\mathbf{s},$ and right-shifts the result to give $(s - \sum\limits_{i=0}^{129} 2^i \cdot \mathbf{s}_i)/2^{130}.$
+
+## Overflow check (general)
+Recall that we defined $\mathbf{z}_j = \sum_{i=j}^n (\mathbf{k}_i \cdot 2^{i−j})$, where $n = 254$.
+
+$\mathbf{z}_j$ cannot overflow for any $j \geq 1$, because it is a weighted sum of bits only up to and including $2^{n-j}$. When $n = 254$ and $j = 1$ this sum can be at most $2^{254} - 1$, which is smaller than $p$ (and also $q$).
+
+However, for full-width scalar mul, it may not be possible to represent $\mathbf{z}_0$ in the base field (e.g. when the base field is Pasta's $\mathbb{F}_p$ and $p < q$). In that case $\mathbf{z}_0 = \alpha + t_q$ *can* overflow $[0, p)$.
+
+So, we need to special-case the row that would mention $\mathbf{z}_0$ so that it is correct for whatever representation we use for a full-width scalar.
+
+Our representation for $k$ will be the pair $(\mathbf{k}_{254}, k' = k - 2^{254} \cdot \mathbf{k}_{254})$. We'll use $k'$ in place of $\alpha + t_q$ for $\mathbf{z}_0$, constraining $k'$ to 254 bits so that it fits in an $\mathbb{F}_p$ element.
+
+Then we just have to generalize the [overflow check used for variable-base scalar mul in the Orchard circuit](https://zcash.github.io/halo2/design/gadgets/ecc/var-base-scalar-mul.html#overflow-check) to work for $k' \in [0, 2 \cdot t_q)$ (because the maximum value of $\alpha + t_q$ is $q - 1 + t_q = 2^{254} + t_q - 1 + t_q$).
+
+
+> Note: the bits $\mathbf{k}_{254..0}$ do not represent a value reduced modulo $q$, but rather a representation of the unreduced $\alpha + t_q$.
+
+Overflow can only occur in the final step that constrains $\mathbf{z}_0 = 2 \cdot \mathbf{z}_1 + \mathbf{k}_0$, and only if $\mathbf{z}_1$ has the bit with weight $2^{253}$ set (i.e. if $\mathbf{k}_{254} = 1$). If we instead set $\mathbf{z}_0 = 2 \cdot \mathbf{z}_1 - 2^{254} \cdot \mathbf{k}_{254} + \mathbf{k}_0$, now $\mathbf{z}_0$ cannot overflow and should be equal to $k'$.
+
+It is then sufficient to also check that $\mathbf{z}_0 + 2^{254} \cdot \mathbf{k}_{254} = \alpha + t_q$ as an integer where $\alpha \in [0, q)$.
+
+Represent $\alpha$ as $2^{254} \cdot \boldsymbol\alpha_{254} + 2^{253} \cdot \boldsymbol\alpha_{253} + \alpha''$ where we constrain $\alpha'' \in [0, 2^{253})$ and $\boldsymbol\alpha_{253}$ and $\boldsymbol\alpha_{254}$ to boolean. For this to be a canonical representation we also need $\boldsymbol \alpha_{254} = 1 \implies (\boldsymbol \alpha_{253} = 0 \;\wedge\; \alpha'' \in [0, t_q))$.
+
+Let $\alpha' = 2^{253} \cdot \boldsymbol\alpha_{253} + \alpha''$.
+
+If $\boldsymbol\alpha_{254} = 1$:
+* constrain $\mathbf{k}_{254} = 1$ and $\mathbf{z}_0 = \alpha' + t_q$. This cannot overflow because in this case $\alpha' \in [0, t_q)$ and so $\mathbf{z}_0 \in [0, 2 \cdot t_q)$.
+
+If $\boldsymbol\alpha_{254} = 0$:
+* we should have $\mathbf{k}_{254} = 1$ iff $\alpha' \in [2^{254} - t_q, 2^{254})$, i.e. witness $\mathbf{k}_{254}$ as boolean and then
+  * If $\mathbf{k}_{254} = 0$ then constrain $\alpha' \not\in [2^{254} - t_q, 2^{254})$.
+    * This can be done by constraining either $\boldsymbol\alpha_{253} = 0$ or $\alpha'' + t_q \in [0, 2^{253})$. ($\alpha'' + t_q$ cannot overflow.)
+  * If $\mathbf{k}_{254} = 1$ then constrain $\alpha' \in [2^{254} - t_q, 2^{254})$.
+    * This can be done by constraining $\alpha' - (2^{254} - t_q) \in [0, 2^{130})$ and $\alpha' - 2^{254} + 2^{130} \in [0, 2^{130})$.
+
+### Overflow check constraints (general)
+
+Represent $\alpha$ as $2^{254} \cdot \boldsymbol\alpha_{254} + 2^{253} \cdot \boldsymbol\alpha_{253} + \alpha''$ as above.
+
+The constraints for the overflow check are:
+
+$$
+\begin{aligned}
+&\alpha'' \in [0, 2^{253}) \\
+&\boldsymbol\alpha_{253} \in \{0,1\} \\
+&\boldsymbol\alpha_{254} \in \{0,1\} \\
+&\mathbf{k}_{254} \in \{0,1\} \\
+\boldsymbol \alpha_{254} = 1 \implies &\boldsymbol \alpha_{253} = 0 \\
+\boldsymbol \alpha_{254} = 1 \implies &\alpha'' \in [0, 2^{130}) \;❁ \\
+\boldsymbol \alpha_{254} = 1 \implies &\alpha'' + 2^{130} - t_q \in [0, 2^{130}) \;❁ \\
+\boldsymbol\alpha_{254} = 1 \implies &\mathbf{k}_{254} = 1 \\
+\boldsymbol\alpha_{254} = 1 \implies &\mathbf{z}_0 = \alpha' + t_q \\
+\boldsymbol\alpha_{254} = 0 \;\wedge\; \boldsymbol\alpha_{253} = 1 \;\wedge\; \mathbf{k}_{254} = 0 &\implies \alpha'' + t_q \in [0, 2^{253}) \\
+\boldsymbol\alpha_{254} = 0 \;\wedge\; \mathbf{k}_{254} = 1 &\implies \alpha' - 2^{254} + t_q \in [0, 2^{130}) \;❁ \\
+\boldsymbol\alpha_{254} = 0 \;\wedge\; \mathbf{k}_{254} = 1 &\implies \alpha' - 2^{254} + 2^{130} \in [0, 2^{130}) \;❁ \\
+\end{aligned}
+$$
+
+Note that the four 130-bit constraints marked $❁$ are in two pairs that occur in disjoint cases. We can therefore combine them into two 130-bit constraints using a new witness variable $u$; the other constraint always being on $u + 2^{130} - t_q$:
+
+$$
+\begin{aligned}
+\boldsymbol \alpha_{254} = 1 \implies &u = \alpha'' \\
+\boldsymbol\alpha_{254} = 0 \;\wedge\; \mathbf{k}_{254} = 1 \implies &u = \alpha' - 2^{254} + t_q \\
+&u \in [0, 2^{130}) \\
+&u + 2^{130} - t_q \in [0, 2^{130}) \\
+\end{aligned}
+$$
+
+($u$ is unconstrained and can be witnessed as $0$ in the case $\boldsymbol\alpha_{254} = 0 \;\wedge\; \mathbf{k}_{254} = 0$.)
+
+### Cost
+
+* 25 10-bit and one 3-bit range check, to constrain $\alpha''$ to 253 bits;
+* 25 10-bit and one 3-bit range check, to constrain $\alpha'' + t_q$ to 253 bits when $\boldsymbol\alpha_{254} = 0 \;\wedge\; \boldsymbol\alpha_{253} = 1 \;\wedge\; \mathbf{k}_{254} = 0$;
+* two times 13 10-bit range checks.

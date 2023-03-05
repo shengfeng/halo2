@@ -1,38 +1,57 @@
 //! Utility gadgets.
 
-use ff::PrimeFieldBits;
+use ff::{Field, PrimeField, PrimeFieldBits};
 use halo2_proofs::{
-    circuit::{AssignedCell, Cell, Layouter},
+    circuit::{AssignedCell, Cell, Layouter, Value},
     plonk::{Advice, Column, Error, Expression},
 };
-use pasta_curves::arithmetic::FieldExt;
-use std::{array, ops::Range};
+
+use std::marker::PhantomData;
+use std::ops::Range;
 
 pub mod cond_swap;
 pub mod decompose_running_sum;
 pub mod lookup_range_check;
 
+/// A type that has a value at either keygen or proving time.
+pub trait FieldValue<F: Field> {
+    /// Returns the value of this type.
+    fn value(&self) -> Value<&F>;
+}
+
+impl<F: Field> FieldValue<F> for Value<F> {
+    fn value(&self) -> Value<&F> {
+        self.as_ref()
+    }
+}
+
+impl<F: Field> FieldValue<F> for AssignedCell<F, F> {
+    fn value(&self) -> Value<&F> {
+        self.value()
+    }
+}
+
 /// Trait for a variable in the circuit.
-pub trait Var<F: FieldExt>: Clone + std::fmt::Debug + From<AssignedCell<F, F>> {
+pub trait Var<F: Field>: Clone + std::fmt::Debug + From<AssignedCell<F, F>> {
     /// The cell at which this variable was allocated.
     fn cell(&self) -> Cell;
 
     /// The value allocated to this variable.
-    fn value(&self) -> Option<F>;
+    fn value(&self) -> Value<F>;
 }
 
-impl<F: FieldExt> Var<F> for AssignedCell<F, F> {
+impl<F: Field> Var<F> for AssignedCell<F, F> {
     fn cell(&self) -> Cell {
         self.cell()
     }
 
-    fn value(&self) -> Option<F> {
+    fn value(&self) -> Value<F> {
         self.value().cloned()
     }
 }
 
 /// Trait for utilities used across circuits.
-pub trait UtilitiesInstructions<F: FieldExt> {
+pub trait UtilitiesInstructions<F: Field> {
     /// Variable in the circuit.
     type Var: Var<F>;
 
@@ -41,46 +60,85 @@ pub trait UtilitiesInstructions<F: FieldExt> {
         &self,
         mut layouter: impl Layouter<F>,
         column: Column<Advice>,
-        value: Option<F>,
+        value: Value<F>,
     ) -> Result<Self::Var, Error> {
         layouter.assign_region(
             || "load private",
             |mut region| {
                 region
-                    .assign_advice(
-                        || "load private",
-                        column,
-                        0,
-                        || value.ok_or(Error::Synthesis),
-                    )
+                    .assign_advice(|| "load private", column, 0, || value)
                     .map(Self::Var::from)
             },
         )
     }
 }
 
-pub(crate) fn transpose_option_array<T: Copy + std::fmt::Debug, const LEN: usize>(
-    option_array: Option<[T; LEN]>,
-) -> [Option<T>; LEN] {
-    let mut ret = [None; LEN];
-    if let Some(arr) = option_array {
-        for (entry, value) in ret.iter_mut().zip(array::IntoIter::new(arr)) {
-            *entry = Some(value);
+/// A type representing a range-constrained field element.
+#[derive(Clone, Copy, Debug)]
+pub struct RangeConstrained<F: Field, T: FieldValue<F>> {
+    inner: T,
+    num_bits: usize,
+    _phantom: PhantomData<F>,
+}
+
+impl<F: Field, T: FieldValue<F>> RangeConstrained<F, T> {
+    /// Returns the range-constrained inner type.
+    pub fn inner(&self) -> &T {
+        &self.inner
+    }
+
+    /// Returns the number of bits to which this cell is constrained.
+    pub fn num_bits(&self) -> usize {
+        self.num_bits
+    }
+}
+
+impl<F: PrimeFieldBits> RangeConstrained<F, Value<F>> {
+    /// Constructs a `RangeConstrained<Value<F>>` as a bitrange of the given value.
+    pub fn bitrange_of(value: Value<&F>, bitrange: Range<usize>) -> Self {
+        let num_bits = bitrange.len();
+        Self {
+            inner: value.map(|value| bitrange_subset(value, bitrange)),
+            num_bits,
+            _phantom: PhantomData::default(),
         }
     }
-    ret
+}
+
+impl<F: Field> RangeConstrained<F, AssignedCell<F, F>> {
+    /// Constructs a `RangeConstrained<AssignedCell<F, F>>` without verifying that the
+    /// cell is correctly range constrained.
+    ///
+    /// This API only exists to ease with integrating this type into existing circuits,
+    /// and will likely be removed in future.
+    pub fn unsound_unchecked(cell: AssignedCell<F, F>, num_bits: usize) -> Self {
+        Self {
+            inner: cell,
+            num_bits,
+            _phantom: PhantomData::default(),
+        }
+    }
+
+    /// Extracts the range-constrained value from this range-constrained cell.
+    pub fn value(&self) -> RangeConstrained<F, Value<F>> {
+        RangeConstrained {
+            inner: self.inner.value().copied(),
+            num_bits: self.num_bits,
+            _phantom: PhantomData::default(),
+        }
+    }
 }
 
 /// Checks that an expression is either 1 or 0.
-pub fn bool_check<F: FieldExt>(value: Expression<F>) -> Expression<F> {
+pub fn bool_check<F: PrimeField>(value: Expression<F>) -> Expression<F> {
     range_check(value, 2)
 }
 
 /// If `a` then `b`, else `c`. Returns (a * b) + (1 - a) * c.
 ///
 /// `a` must be a boolean-constrained expression.
-pub fn ternary<F: FieldExt>(a: Expression<F>, b: Expression<F>, c: Expression<F>) -> Expression<F> {
-    let one_minus_a = Expression::Constant(F::one()) - a.clone();
+pub fn ternary<F: Field>(a: Expression<F>, b: Expression<F>, c: Expression<F>) -> Expression<F> {
+    let one_minus_a = Expression::Constant(F::ONE) - a.clone();
     a * b + one_minus_a * c
 }
 
@@ -94,13 +152,13 @@ pub fn bitrange_subset<F: PrimeFieldBits>(field_elem: &F, bitrange: Range<usize>
     field_elem
         .to_le_bits()
         .iter()
-        .by_val()
+        .by_vals()
         .skip(bitrange.start)
         .take(bitrange.end - bitrange.start)
         .rev()
-        .fold(F::zero(), |acc, bit| {
+        .fold(F::ZERO, |acc, bit| {
             if bit {
-                acc.double() + F::one()
+                acc.double() + F::ONE
             } else {
                 acc.double()
             }
@@ -109,7 +167,7 @@ pub fn bitrange_subset<F: PrimeFieldBits>(field_elem: &F, bitrange: Range<usize>
 
 /// Check that an expression is in the small range [0..range),
 /// i.e. 0 ≤ word < range.
-pub fn range_check<F: FieldExt>(word: Expression<F>, range: usize) -> Expression<F> {
+pub fn range_check<F: PrimeField>(word: Expression<F>, range: usize) -> Expression<F> {
     (1..range).fold(word.clone(), |acc, i| {
         acc * (Expression::Constant(F::from(i as u64)) - word.clone())
     })
@@ -167,10 +225,10 @@ pub fn i2lebsp<const NUM_BITS: usize>(int: u64) -> [bool; NUM_BITS] {
     /// Takes in an FnMut closure and returns a constant-length array with elements of
     /// type `Output`.
     fn gen_const_array<Output: Copy + Default, const LEN: usize>(
-        mut closure: impl FnMut(usize) -> Output,
+        closure: impl FnMut(usize) -> Output,
     ) -> [Output; LEN] {
         let mut ret: [Output; LEN] = [Default::default(); LEN];
-        for (bit, val) in ret.iter_mut().zip((0..LEN).map(|idx| closure(idx))) {
+        for (bit, val) in ret.iter_mut().zip((0..LEN).map(closure)) {
             *bit = val;
         }
         ret
@@ -182,14 +240,14 @@ pub fn i2lebsp<const NUM_BITS: usize>(int: u64) -> [bool; NUM_BITS] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use group::ff::{Field, PrimeField};
+    use group::ff::{Field, FromUniformBytes, PrimeField};
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::{FailureLocation, MockProver, VerifyFailure},
-        plonk::{Any, Circuit, ConstraintSystem, Error, Selector},
+        plonk::{Any, Circuit, ConstraintSystem, Constraints, Error, Selector},
         poly::Rotation,
     };
-    use pasta_curves::{arithmetic::FieldExt, pallas};
+    use pasta_curves::pallas;
     use proptest::prelude::*;
     use rand::rngs::OsRng;
     use std::convert::TryInto;
@@ -226,7 +284,7 @@ mod tests {
                     let selector = meta.query_selector(selector);
                     let advice = meta.query_advice(advice, Rotation::cur());
 
-                    vec![selector * range_check(advice, RANGE)]
+                    Constraints::with_selector(selector, Some(range_check(advice, RANGE)))
                 });
 
                 Config { selector, advice }
@@ -245,7 +303,7 @@ mod tests {
                             || format!("witness {}", self.0),
                             config.advice,
                             0,
-                            || Ok(pallas::Base::from(self.0 as u64)),
+                            || Value::known(pallas::Base::from(self.0 as u64)),
                         )?;
 
                         Ok(())
@@ -277,6 +335,8 @@ mod tests {
         }
     }
 
+    #[allow(clippy::assign_op_pattern)]
+    #[allow(clippy::ptr_offset_with_cast)]
     #[test]
     fn test_bitrange_subset() {
         let rng = OsRng;
@@ -298,7 +358,7 @@ mod tests {
             let field_elem = pallas::Base::random(rng);
             let bitrange = 0..0;
             let subset = bitrange_subset(&field_elem, bitrange);
-            assert_eq!(pallas::Base::zero(), subset);
+            assert_eq!(pallas::Base::ZERO, subset);
         }
 
         // Closure to decompose field element into pieces using consecutive ranges,
@@ -360,7 +420,7 @@ mod tests {
             // Instead of rejecting out-of-range bytes, let's reduce them.
             let mut buf = [0; 64];
             buf[..32].copy_from_slice(&bytes);
-            pallas::Scalar::from_bytes_wide(&buf)
+            pallas::Scalar::from_uniform_bytes(&buf)
         }
     }
 

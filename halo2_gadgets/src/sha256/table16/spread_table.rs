@@ -1,7 +1,8 @@
 use super::{util::*, AssignedBits};
+
+use group::ff::{Field, PrimeField};
 use halo2_proofs::{
-    arithmetic::FieldExt,
-    circuit::{Chip, Layouter, Region},
+    circuit::{Chip, Layouter, Region, Value},
     pasta::pallas,
     plonk::{Advice, Column, ConstraintSystem, Error, TableColumn},
     poly::Rotation,
@@ -68,7 +69,7 @@ impl<const DENSE: usize, const SPREAD: usize> SpreadWord<DENSE, SPREAD> {
 /// A variable stored in advice columns corresponding to a row of [`SpreadTableConfig`].
 #[derive(Clone, Debug)]
 pub(super) struct SpreadVar<const DENSE: usize, const SPREAD: usize> {
-    pub tag: Option<u8>,
+    pub _tag: Value<u8>,
     pub dense: AssignedBits<DENSE>,
     pub spread: AssignedBits<SPREAD>,
 }
@@ -78,7 +79,7 @@ impl<const DENSE: usize, const SPREAD: usize> SpreadVar<DENSE, SPREAD> {
         region: &mut Region<'_, pallas::Base>,
         cols: &SpreadInputs,
         row: usize,
-        word: Option<SpreadWord<DENSE, SPREAD>>,
+        word: Value<SpreadWord<DENSE, SPREAD>>,
     ) -> Result<Self, Error> {
         let tag = word.map(|word| word.tag);
         let dense_val = word.map(|word| word.dense);
@@ -88,10 +89,7 @@ impl<const DENSE: usize, const SPREAD: usize> SpreadVar<DENSE, SPREAD> {
             || "tag",
             cols.tag,
             row,
-            || {
-                tag.map(|tag| pallas::Base::from(tag as u64))
-                    .ok_or(Error::Synthesis)
-            },
+            || tag.map(|tag| pallas::Base::from(tag as u64)),
         )?;
 
         let dense =
@@ -100,7 +98,11 @@ impl<const DENSE: usize, const SPREAD: usize> SpreadVar<DENSE, SPREAD> {
         let spread =
             AssignedBits::<SPREAD>::assign_bits(region, || "spread", cols.spread, row, spread_val)?;
 
-        Ok(SpreadVar { tag, dense, spread })
+        Ok(SpreadVar {
+            _tag: tag,
+            dense,
+            spread,
+        })
     }
 
     pub(super) fn without_lookup(
@@ -109,7 +111,7 @@ impl<const DENSE: usize, const SPREAD: usize> SpreadVar<DENSE, SPREAD> {
         dense_row: usize,
         spread_col: Column<Advice>,
         spread_row: usize,
-        word: Option<SpreadWord<DENSE, SPREAD>>,
+        word: Value<SpreadWord<DENSE, SPREAD>>,
     ) -> Result<Self, Error> {
         let tag = word.map(|word| word.tag);
         let dense_val = word.map(|word| word.dense);
@@ -131,7 +133,11 @@ impl<const DENSE: usize, const SPREAD: usize> SpreadVar<DENSE, SPREAD> {
             spread_val,
         )?;
 
-        Ok(SpreadVar { tag, dense, spread })
+        Ok(SpreadVar {
+            _tag: tag,
+            dense,
+            spread,
+        })
     }
 }
 
@@ -156,12 +162,12 @@ pub(super) struct SpreadTableConfig {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct SpreadTableChip<F: FieldExt> {
+pub(super) struct SpreadTableChip<F: Field> {
     config: SpreadTableConfig,
     _marker: PhantomData<F>,
 }
 
-impl<F: FieldExt> Chip<F> for SpreadTableChip<F> {
+impl<F: Field> Chip<F> for SpreadTableChip<F> {
     type Config = SpreadTableConfig;
     type Loaded = ();
 
@@ -174,7 +180,7 @@ impl<F: FieldExt> Chip<F> for SpreadTableChip<F> {
     }
 }
 
-impl<F: FieldExt> SpreadTableChip<F> {
+impl<F: PrimeField> SpreadTableChip<F> {
     pub fn configure(
         meta: &mut ConstraintSystem<F>,
         input_tag: Column<Advice>,
@@ -229,20 +235,20 @@ impl<F: FieldExt> SpreadTableChip<F> {
                         index,
                         || {
                             row = rows.next();
-                            row.map(|(tag, _, _)| tag).ok_or(Error::Synthesis)
+                            Value::known(row.map(|(tag, _, _)| tag).unwrap())
                         },
                     )?;
                     table.assign_cell(
                         || "dense",
                         config.table.dense,
                         index,
-                        || row.map(|(_, dense, _)| dense).ok_or(Error::Synthesis),
+                        || Value::known(row.map(|(_, dense, _)| dense).unwrap()),
                     )?;
                     table.assign_cell(
                         || "spread",
                         config.table.spread,
                         index,
-                        || row.map(|(_, _, spread)| spread).ok_or(Error::Synthesis),
+                        || Value::known(row.map(|(_, _, spread)| spread).unwrap()),
                     )?;
                 }
 
@@ -253,35 +259,32 @@ impl<F: FieldExt> SpreadTableChip<F> {
 }
 
 impl SpreadTableConfig {
-    fn generate<F: FieldExt>() -> impl Iterator<Item = (F, F, F)> {
-        (1..=(1 << 16)).scan(
-            (F::zero(), F::zero(), F::zero()),
-            |(tag, dense, spread), i| {
-                // We computed this table row in the previous iteration.
-                let res = (*tag, *dense, *spread);
+    fn generate<F: PrimeField>() -> impl Iterator<Item = (F, F, F)> {
+        (1..=(1 << 16)).scan((F::ZERO, F::ZERO, F::ZERO), |(tag, dense, spread), i| {
+            // We computed this table row in the previous iteration.
+            let res = (*tag, *dense, *spread);
 
-                // i holds the zero-indexed row number for the next table row.
-                match i {
-                    BITS_7 | BITS_10 | BITS_11 | BITS_13 | BITS_14 => *tag += F::one(),
-                    _ => (),
-                }
-                *dense += F::one();
-                if i & 1 == 0 {
-                    // On even-numbered rows we recompute the spread.
-                    *spread = F::zero();
-                    for b in 0..16 {
-                        if (i >> b) & 1 != 0 {
-                            *spread += F::from(1 << (2 * b));
-                        }
+            // i holds the zero-indexed row number for the next table row.
+            match i {
+                BITS_7 | BITS_10 | BITS_11 | BITS_13 | BITS_14 => *tag += F::ONE,
+                _ => (),
+            }
+            *dense += F::ONE;
+            if i & 1 == 0 {
+                // On even-numbered rows we recompute the spread.
+                *spread = F::ZERO;
+                for b in 0..16 {
+                    if (i >> b) & 1 != 0 {
+                        *spread += F::from(1 << (2 * b));
                     }
-                } else {
-                    // On odd-numbered rows we add one.
-                    *spread += F::one();
                 }
+            } else {
+                // On odd-numbered rows we add one.
+                *spread += F::ONE;
+            }
 
-                Some(res)
-            },
-        )
+            Some(res)
+        })
     }
 }
 
@@ -290,9 +293,9 @@ mod tests {
     use super::{get_tag, SpreadTableChip, SpreadTableConfig};
     use rand::Rng;
 
+    use group::ff::PrimeField;
     use halo2_proofs::{
-        arithmetic::FieldExt,
-        circuit::{Layouter, SimpleFloorPlanner},
+        circuit::{Layouter, SimpleFloorPlanner, Value},
         dev::MockProver,
         pasta::Fp,
         plonk::{Advice, Circuit, Column, ConstraintSystem, Error},
@@ -306,7 +309,7 @@ mod tests {
 
         struct MyCircuit {}
 
-        impl<F: FieldExt> Circuit<F> for MyCircuit {
+        impl<F: PrimeField> Circuit<F> for MyCircuit {
             type Config = SpreadTableConfig;
             type FloorPlanner = SimpleFloorPlanner;
 
@@ -334,33 +337,43 @@ mod tests {
                     |mut gate| {
                         let mut row = 0;
                         let mut add_row = |tag, dense, spread| -> Result<(), Error> {
-                            gate.assign_advice(|| "tag", config.input.tag, row, || Ok(tag))?;
-                            gate.assign_advice(|| "dense", config.input.dense, row, || Ok(dense))?;
+                            gate.assign_advice(
+                                || "tag",
+                                config.input.tag,
+                                row,
+                                || Value::known(tag),
+                            )?;
+                            gate.assign_advice(
+                                || "dense",
+                                config.input.dense,
+                                row,
+                                || Value::known(dense),
+                            )?;
                             gate.assign_advice(
                                 || "spread",
                                 config.input.spread,
                                 row,
-                                || Ok(spread),
+                                || Value::known(spread),
                             )?;
                             row += 1;
                             Ok(())
                         };
 
                         // Test the first few small values.
-                        add_row(F::zero(), F::from(0b000), F::from(0b000000))?;
-                        add_row(F::zero(), F::from(0b001), F::from(0b000001))?;
-                        add_row(F::zero(), F::from(0b010), F::from(0b000100))?;
-                        add_row(F::zero(), F::from(0b011), F::from(0b000101))?;
-                        add_row(F::zero(), F::from(0b100), F::from(0b010000))?;
-                        add_row(F::zero(), F::from(0b101), F::from(0b010001))?;
+                        add_row(F::ZERO, F::from(0b000), F::from(0b000000))?;
+                        add_row(F::ZERO, F::from(0b001), F::from(0b000001))?;
+                        add_row(F::ZERO, F::from(0b010), F::from(0b000100))?;
+                        add_row(F::ZERO, F::from(0b011), F::from(0b000101))?;
+                        add_row(F::ZERO, F::from(0b100), F::from(0b010000))?;
+                        add_row(F::ZERO, F::from(0b101), F::from(0b010001))?;
 
                         // Test the tag boundaries:
                         // 7-bit
-                        add_row(F::zero(), F::from(0b1111111), F::from(0b01010101010101))?;
-                        add_row(F::one(), F::from(0b10000000), F::from(0b0100000000000000))?;
+                        add_row(F::ZERO, F::from(0b1111111), F::from(0b01010101010101))?;
+                        add_row(F::ONE, F::from(0b10000000), F::from(0b0100000000000000))?;
                         // - 10-bit
                         add_row(
-                            F::one(),
+                            F::ONE,
                             F::from(0b1111111111),
                             F::from(0b01010101010101010101),
                         )?;

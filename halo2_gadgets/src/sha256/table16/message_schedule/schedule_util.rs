@@ -1,6 +1,10 @@
 use super::super::AssignedBits;
 use super::MessageScheduleConfig;
-use halo2_proofs::{circuit::Region, pasta::pallas, plonk::Error};
+use halo2_proofs::{
+    circuit::{Region, Value},
+    pasta::pallas,
+    plonk::Error,
+};
 
 #[cfg(test)]
 use super::super::{super::BLOCK_SIZE, BlockWord, ROUNDS};
@@ -36,20 +40,17 @@ pub fn get_word_row(word_idx: usize) -> usize {
     if word_idx == 0 {
         0
     } else if (1..=13).contains(&word_idx) {
-        SUBREGION_0_ROWS + SUBREGION_1_WORD * (word_idx - 1) as usize
+        SUBREGION_0_ROWS + SUBREGION_1_WORD * (word_idx - 1)
     } else if (14..=48).contains(&word_idx) {
         SUBREGION_0_ROWS + SUBREGION_1_ROWS + SUBREGION_2_WORD * (word_idx - 14) + 1
     } else if (49..=61).contains(&word_idx) {
-        SUBREGION_0_ROWS
-            + SUBREGION_1_ROWS
-            + SUBREGION_2_ROWS
-            + SUBREGION_3_WORD * (word_idx - 49) as usize
+        SUBREGION_0_ROWS + SUBREGION_1_ROWS + SUBREGION_2_ROWS + SUBREGION_3_WORD * (word_idx - 49)
     } else {
         SUBREGION_0_ROWS
             + SUBREGION_1_ROWS
             + SUBREGION_2_ROWS
             + SUBREGION_3_ROWS
-            + DECOMPOSE_0_ROWS * (word_idx - 62) as usize
+            + DECOMPOSE_0_ROWS * (word_idx - 62)
     }
 }
 
@@ -57,22 +58,22 @@ pub fn get_word_row(word_idx: usize) -> usize {
 #[cfg(test)]
 pub fn msg_schedule_test_input() -> [BlockWord; BLOCK_SIZE] {
     [
-        BlockWord(Some(0b01100001011000100110001110000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000000000)),
-        BlockWord(Some(0b00000000000000000000000000011000)),
+        BlockWord(Value::known(0b01100001011000100110001110000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000000000)),
+        BlockWord(Value::known(0b00000000000000000000000000011000)),
     ]
 }
 
@@ -149,7 +150,7 @@ impl MessageScheduleConfig {
     pub fn assign_word_and_halves(
         &self,
         region: &mut Region<'_, pallas::Base>,
-        word: Option<u32>,
+        word: Value<u32>,
         word_idx: usize,
     ) -> Result<(AssignedBits<32>, (AssignedBits<16>, AssignedBits<16>)), Error> {
         // Rename these here for ease of matching the gates to the specification.

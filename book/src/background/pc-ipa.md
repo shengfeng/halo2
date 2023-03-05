@@ -53,16 +53,16 @@ $\mathbf{b}^{(k)} := \mathbf{b}.$ In each round $j = k, k-1, \cdots, 1$:
 $$
 \begin{aligned}
 L_j &= \langle\mathbf{a_{lo}^{(j)}}, \mathbf{G_{hi}^{(j)}}\rangle + [l_j]H + [\langle\mathbf{a_{lo}^{(j)}}, \mathbf{b_{hi}^{(j)}}\rangle] U\\
-R_j &= \langle\mathbf{a_{hi}^{(j)}}, \mathbf{G_{lo}^{(j)}}\rangle + [l_j]H + [\langle\mathbf{a_{hi}^{(j)}}, \mathbf{b_{lo}^{(j)}}\rangle] U\\
+R_j &= \langle\mathbf{a_{hi}^{(j)}}, \mathbf{G_{lo}^{(j)}}\rangle + [r_j]H + [\langle\mathbf{a_{hi}^{(j)}}, \mathbf{b_{lo}^{(j)}}\rangle] U\\
 \end{aligned}
 $$
 
 * the verifier issues a random challenge $u_j$;
 * the prover uses $u_j$ to compress the lower and higher halves of $\mathbf{a}^{(j)}$,
   thus producing a new vector of half the original length 
-  $$\mathbf{a}^{(j-1)} = \mathbf{a_{hi}^{(j)}}\cdot u_j^{-1} + \mathbf{a_{lo}^{(j)}}\cdot u_j.$$
+  $$\mathbf{a}^{(j-1)} = \mathbf{a_{hi}^{(j)}} + \mathbf{a_{lo}^{(j)}}\cdot u_j^{-1}.$$
   The vectors $\mathbf{G}^{(j)}$ and $\mathbf{b}^{(j)}$ are similarly compressed to give
-  $\mathbf{G}^{(j-1)}$ and $\mathbf{b}^{(j-1)}$.
+  $\mathbf{G}^{(j-1)}$ and $\mathbf{b}^{(j-1)}$ (using $u_j$ instead of $u_j^{-1}$).
 * $\mathbf{a}^{(j-1)}$, $\mathbf{G}^{(j-1)}$ and $\mathbf{b}^{(j-1)}$ are input to the
   next round $j - 1.$
 

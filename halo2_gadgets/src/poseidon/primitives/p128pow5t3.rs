@@ -22,7 +22,7 @@ impl Spec<Fp, 3, 2> for P128Pow5T3 {
     }
 
     fn sbox(val: Fp) -> Fp {
-        val.pow_vartime(&[5])
+        val.pow_vartime([5])
     }
 
     fn secure_mds() -> usize {
@@ -48,7 +48,7 @@ impl Spec<Fq, 3, 2> for P128Pow5T3 {
     }
 
     fn sbox(val: Fq) -> Fq {
-        val.pow_vartime(&[5])
+        val.pow_vartime([5])
     }
 
     fn secure_mds() -> usize {
@@ -66,29 +66,32 @@ impl Spec<Fq, 3, 2> for P128Pow5T3 {
 
 #[cfg(test)]
 mod tests {
-    use ff::PrimeField;
+    use ff::{Field, FromUniformBytes, PrimeField};
     use std::marker::PhantomData;
-
-    use pasta_curves::arithmetic::FieldExt;
 
     use super::{
         super::{fp, fq},
         Fp, Fq,
     };
-    use crate::primitives::poseidon::{permute, ConstantLength, Hash, Spec};
+    use crate::poseidon::primitives::{
+        generate_constants, permute, ConstantLength, Hash, Mds, Spec,
+    };
 
     /// The same Poseidon specification as poseidon::P128Pow5T3, but constructed
     /// such that its constants will be generated at runtime.
     #[derive(Debug)]
-    pub struct P128Pow5T3Gen<F: FieldExt, const SECURE_MDS: usize>(PhantomData<F>);
+    pub struct P128Pow5T3Gen<F: Field, const SECURE_MDS: usize>(PhantomData<F>);
 
-    impl<F: FieldExt, const SECURE_MDS: usize> P128Pow5T3Gen<F, SECURE_MDS> {
+    impl<F: Field, const SECURE_MDS: usize> P128Pow5T3Gen<F, SECURE_MDS> {
+        #![allow(dead_code)]
         pub fn new() -> Self {
             P128Pow5T3Gen(PhantomData::default())
         }
     }
 
-    impl<F: FieldExt, const SECURE_MDS: usize> Spec<F, 3, 2> for P128Pow5T3Gen<F, SECURE_MDS> {
+    impl<F: FromUniformBytes<64> + Ord, const SECURE_MDS: usize> Spec<F, 3, 2>
+        for P128Pow5T3Gen<F, SECURE_MDS>
+    {
         fn full_rounds() -> usize {
             8
         }
@@ -98,17 +101,21 @@ mod tests {
         }
 
         fn sbox(val: F) -> F {
-            val.pow_vartime(&[5])
+            val.pow_vartime([5])
         }
 
         fn secure_mds() -> usize {
             SECURE_MDS
         }
+
+        fn constants() -> (Vec<[F; 3]>, Mds<F, 3>, Mds<F, 3>) {
+            generate_constants::<_, Self, 3, 2>()
+        }
     }
 
     #[test]
     fn verify_constants() {
-        fn verify_constants_helper<F: FieldExt>(
+        fn verify_constants_helper<F: FromUniformBytes<64> + Ord>(
             expected_round_constants: [[F; 3]; 64],
             expected_mds: [[F; 3]; 3],
             expected_mds_inv: [[F; 3]; 3],
@@ -250,7 +257,7 @@ mod tests {
         {
             let (round_constants, mds, _) = super::P128Pow5T3::constants();
 
-            for tv in crate::primitives::poseidon::test_vectors::fp::permute() {
+            for tv in crate::poseidon::primitives::test_vectors::fp::permute() {
                 let mut state = [
                     Fp::from_repr(tv.initial_state[0]).unwrap(),
                     Fp::from_repr(tv.initial_state[1]).unwrap(),
@@ -268,7 +275,7 @@ mod tests {
         {
             let (round_constants, mds, _) = super::P128Pow5T3::constants();
 
-            for tv in crate::primitives::poseidon::test_vectors::fq::permute() {
+            for tv in crate::poseidon::primitives::test_vectors::fq::permute() {
                 let mut state = [
                     Fq::from_repr(tv.initial_state[0]).unwrap(),
                     Fq::from_repr(tv.initial_state[1]).unwrap(),
@@ -286,7 +293,7 @@ mod tests {
 
     #[test]
     fn hash_test_vectors() {
-        for tv in crate::primitives::poseidon::test_vectors::fp::hash() {
+        for tv in crate::poseidon::primitives::test_vectors::fp::hash() {
             let message = [
                 Fp::from_repr(tv.input[0]).unwrap(),
                 Fp::from_repr(tv.input[1]).unwrap(),
@@ -298,7 +305,7 @@ mod tests {
             assert_eq!(result.to_repr(), tv.output);
         }
 
-        for tv in crate::primitives::poseidon::test_vectors::fq::hash() {
+        for tv in crate::poseidon::primitives::test_vectors::fq::hash() {
             let message = [
                 Fq::from_repr(tv.input[0]).unwrap(),
                 Fq::from_repr(tv.input[1]).unwrap(),

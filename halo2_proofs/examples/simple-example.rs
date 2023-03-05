@@ -1,19 +1,19 @@
 use std::marker::PhantomData;
 
+use group::ff::Field;
 use halo2_proofs::{
-    arithmetic::FieldExt,
-    circuit::{AssignedCell, Chip, Layouter, Region, SimpleFloorPlanner},
+    circuit::{AssignedCell, Chip, Layouter, Region, SimpleFloorPlanner, Value},
     plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Fixed, Instance, Selector},
     poly::Rotation,
 };
 
 // ANCHOR: instructions
-trait NumericInstructions<F: FieldExt>: Chip<F> {
+trait NumericInstructions<F: Field>: Chip<F> {
     /// Variable representing a number.
     type Num;
 
     /// Loads a number into the circuit as a private input.
-    fn load_private(&self, layouter: impl Layouter<F>, a: Option<F>) -> Result<Self::Num, Error>;
+    fn load_private(&self, layouter: impl Layouter<F>, a: Value<F>) -> Result<Self::Num, Error>;
 
     /// Loads a number into the circuit as a fixed constant.
     fn load_constant(&self, layouter: impl Layouter<F>, constant: F) -> Result<Self::Num, Error>;
@@ -39,7 +39,7 @@ trait NumericInstructions<F: FieldExt>: Chip<F> {
 // ANCHOR: chip
 /// The chip that will implement our instructions! Chips store their own
 /// config, as well as type markers if necessary.
-struct FieldChip<F: FieldExt> {
+struct FieldChip<F: Field> {
     config: FieldConfig,
     _marker: PhantomData<F>,
 }
@@ -65,7 +65,7 @@ struct FieldConfig {
     s_mul: Selector,
 }
 
-impl<F: FieldExt> FieldChip<F> {
+impl<F: Field> FieldChip<F> {
     fn construct(config: <Self as Chip<F>>::Config) -> Self {
         Self {
             config,
@@ -126,7 +126,7 @@ impl<F: FieldExt> FieldChip<F> {
 // ANCHOR_END: chip-config
 
 // ANCHOR: chip-impl
-impl<F: FieldExt> Chip<F> for FieldChip<F> {
+impl<F: Field> Chip<F> for FieldChip<F> {
     type Config = FieldConfig;
     type Loaded = ();
 
@@ -143,15 +143,15 @@ impl<F: FieldExt> Chip<F> for FieldChip<F> {
 // ANCHOR: instructions-impl
 /// A variable representing a number.
 #[derive(Clone)]
-struct Number<F: FieldExt>(AssignedCell<F, F>);
+struct Number<F: Field>(AssignedCell<F, F>);
 
-impl<F: FieldExt> NumericInstructions<F> for FieldChip<F> {
+impl<F: Field> NumericInstructions<F> for FieldChip<F> {
     type Num = Number<F>;
 
     fn load_private(
         &self,
         mut layouter: impl Layouter<F>,
-        value: Option<F>,
+        value: Value<F>,
     ) -> Result<Self::Num, Error> {
         let config = self.config();
 
@@ -159,12 +159,7 @@ impl<F: FieldExt> NumericInstructions<F> for FieldChip<F> {
             || "load private",
             |mut region| {
                 region
-                    .assign_advice(
-                        || "private input",
-                        config.advice[0],
-                        0,
-                        || value.ok_or(Error::Synthesis),
-                    )
+                    .assign_advice(|| "private input", config.advice[0], 0, || value)
                     .map(Number)
             },
         )
@@ -212,17 +207,12 @@ impl<F: FieldExt> NumericInstructions<F> for FieldChip<F> {
 
                 // Now we can assign the multiplication result, which is to be assigned
                 // into the output position.
-                let value = a.0.value().and_then(|a| b.0.value().map(|b| *a * *b));
+                let value = a.0.value().copied() * b.0.value();
 
                 // Finally, we do the assignment to the output, returning a
                 // variable to be used in another part of the circuit.
                 region
-                    .assign_advice(
-                        || "lhs * rhs",
-                        config.advice[0],
-                        1,
-                        || value.ok_or(Error::Synthesis),
-                    )
+                    .assign_advice(|| "lhs * rhs", config.advice[0], 1, || value)
                     .map(Number)
             },
         )
@@ -248,13 +238,13 @@ impl<F: FieldExt> NumericInstructions<F> for FieldChip<F> {
 /// they won't have any value during key generation. During proving, if any of these
 /// were `None` we would get an error.
 #[derive(Default)]
-struct MyCircuit<F: FieldExt> {
+struct MyCircuit<F: Field> {
     constant: F,
-    a: Option<F>,
-    b: Option<F>,
+    a: Value<F>,
+    b: Value<F>,
 }
 
-impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
+impl<F: Field> Circuit<F> for MyCircuit<F> {
     // Since we are using a single chip for everything, we can just reuse its config.
     type Config = FieldConfig;
     type FloorPlanner = SimpleFloorPlanner;
@@ -329,8 +319,8 @@ fn main() {
     // Instantiate the circuit with the private inputs.
     let circuit = MyCircuit {
         constant,
-        a: Some(a),
-        b: Some(b),
+        a: Value::known(a),
+        b: Value::known(b),
     };
 
     // Arrange the public input. We expose the multiplication result in row 0

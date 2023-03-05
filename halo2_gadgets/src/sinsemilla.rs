@@ -1,16 +1,22 @@
-//! Gadgets for the Sinsemilla hash function.
+//! The [Sinsemilla] hash function.
+//!
+//! [Sinsemilla]: https://zips.z.cash/protocol/protocol.pdf#concretesinsemillahash
 use crate::{
     ecc::{self, EccInstructions, FixedPoints},
-    utilities::Var,
+    utilities::{FieldValue, RangeConstrained, Var},
 };
 use group::ff::{Field, PrimeField};
-use halo2_proofs::{circuit::Layouter, plonk::Error};
+use halo2_proofs::{
+    circuit::{Layouter, Value},
+    plonk::Error,
+};
 use pasta_curves::arithmetic::CurveAffine;
 use std::fmt::Debug;
 
 pub mod chip;
 pub mod merkle;
 mod message;
+pub mod primitives;
 
 /// The set of circuit instructions required to use the [`Sinsemilla`](https://zcash.github.io/halo2/design/gadgets/sinsemilla.html) gadget.
 /// This trait is bounded on two constant parameters: `K`, the number of bits
@@ -64,7 +70,7 @@ pub trait SinsemillaInstructions<C: CurveAffine, const K: usize, const MAX_WORDS
     fn witness_message_piece(
         &self,
         layouter: impl Layouter<C::Base>,
-        value: Option<C::Base>,
+        value: Value<C::Base>,
         num_words: usize,
     ) -> Result<Self::MessagePiece, Error>;
 
@@ -105,10 +111,11 @@ impl<C: CurveAffine, SinsemillaChip, const K: usize, const MAX_WORDS: usize>
 where
     SinsemillaChip: SinsemillaInstructions<C, K, MAX_WORDS> + Clone + Debug + Eq,
 {
+    #![allow(dead_code)]
     fn from_bitstring(
         chip: SinsemillaChip,
         mut layouter: impl Layouter<C::Base>,
-        bitstring: Vec<Option<bool>>,
+        bitstring: Vec<Value<bool>>,
     ) -> Result<Self, Error> {
         // Message must be composed of `K`-bit words.
         assert_eq!(bitstring.len() % K, 0);
@@ -159,7 +166,6 @@ pub struct MessagePiece<C: CurveAffine, SinsemillaChip, const K: usize, const MA
 where
     SinsemillaChip: SinsemillaInstructions<C, K, MAX_WORDS> + Clone + Debug + Eq,
 {
-    chip: SinsemillaChip,
     inner: SinsemillaChip::MessagePiece,
 }
 
@@ -179,10 +185,11 @@ impl<C: CurveAffine, SinsemillaChip, const K: usize, const MAX_WORDS: usize>
 where
     SinsemillaChip: SinsemillaInstructions<C, K, MAX_WORDS> + Clone + Debug + Eq,
 {
+    #![allow(dead_code)]
     fn from_bitstring(
         chip: SinsemillaChip,
         layouter: impl Layouter<C::Base>,
-        bitstring: &[Option<bool>],
+        bitstring: &[Value<bool>],
     ) -> Result<Self, Error> {
         // Message must be composed of `K`-bit words.
         assert_eq!(bitstring.len() % K, 0);
@@ -191,15 +198,15 @@ where
         // Each message piece must have at most `floor(C::Base::CAPACITY / K)` words.
         // This ensures that the all-ones bitstring is canonical in the field.
         let piece_max_num_words = C::Base::CAPACITY as usize / K;
-        assert!(num_words <= piece_max_num_words as usize);
+        assert!(num_words <= piece_max_num_words);
 
         // Closure to parse a bitstring (little-endian) into a base field element.
-        let to_base_field = |bits: &[Option<bool>]| -> Option<C::Base> {
-            let bits: Option<Vec<bool>> = bits.iter().cloned().collect();
+        let to_base_field = |bits: &[Value<bool>]| -> Value<C::Base> {
+            let bits: Value<Vec<bool>> = bits.iter().cloned().collect();
             bits.map(|bits| {
-                bits.into_iter().rev().fold(C::Base::zero(), |acc, bit| {
+                bits.into_iter().rev().fold(C::Base::ZERO, |acc, bit| {
                     if bit {
-                        acc.double() + C::Base::one()
+                        acc.double() + C::Base::ONE
                     } else {
                         acc.double()
                     }
@@ -215,11 +222,44 @@ where
     pub fn from_field_elem(
         chip: SinsemillaChip,
         layouter: impl Layouter<C::Base>,
-        field_elem: Option<C::Base>,
+        field_elem: Value<C::Base>,
         num_words: usize,
     ) -> Result<Self, Error> {
         let inner = chip.witness_message_piece(layouter, field_elem, num_words)?;
-        Ok(Self { chip, inner })
+        Ok(Self { inner })
+    }
+
+    /// Constructs a `MessagePiece` by concatenating a sequence of [`RangeConstrained`]
+    /// subpiece values.
+    ///
+    /// The `MessagePiece` is assigned to the circuit, but not constrained in any way.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the total number of bits across the subpieces is not a multiple of the
+    /// word size, or if the required bitshift for any subpiece is greater than 63 bits.
+    pub fn from_subpieces(
+        chip: SinsemillaChip,
+        layouter: impl Layouter<C::Base>,
+        subpieces: impl IntoIterator<Item = RangeConstrained<C::Base, Value<C::Base>>>,
+    ) -> Result<Self, Error> {
+        let (field_elem, total_bits) = subpieces.into_iter().fold(
+            (Value::known(C::Base::ZERO), 0),
+            |(acc, bits), subpiece| {
+                assert!(bits < 64);
+                let subpiece_shifted = subpiece
+                    .inner()
+                    .value()
+                    .map(|v| C::Base::from(1 << bits) * v);
+                (acc + subpiece_shifted, bits + subpiece.num_bits())
+            },
+        );
+
+        // Message must be composed of `K`-bit words.
+        assert_eq!(total_bits % K, 0);
+        let num_words = total_bits / K;
+
+        Self::from_field_elem(chip, layouter, field_elem, num_words)
     }
 }
 
@@ -380,7 +420,7 @@ where
         &self,
         mut layouter: impl Layouter<C::Base>,
         message: Message<C, SinsemillaChip, K, MAX_WORDS>,
-        r: Option<C::Scalar>,
+        r: ecc::ScalarFixed<C, EccChip>,
     ) -> Result<
         (
             ecc::Point<C, EccChip>,
@@ -403,7 +443,7 @@ where
         &self,
         mut layouter: impl Layouter<C::Base>,
         message: Message<C, SinsemillaChip, K, MAX_WORDS>,
-        r: Option<C::Scalar>,
+        r: ecc::ScalarFixed<C, EccChip>,
     ) -> Result<(ecc::X<C, EccChip>, Vec<SinsemillaChip::RunningSum>), Error> {
         assert_eq!(self.M.sinsemilla_chip, message.chip);
         let (p, zs) = self.commit(layouter.namespace(|| "commit"), message, r)?;
@@ -414,7 +454,7 @@ where
 #[cfg(test)]
 pub(crate) mod tests {
     use halo2_proofs::{
-        circuit::{Layouter, SimpleFloorPlanner},
+        circuit::{Layouter, SimpleFloorPlanner, Value},
         dev::MockProver,
         plonk::{Circuit, ConstraintSystem, Error},
     };
@@ -426,7 +466,8 @@ pub(crate) mod tests {
     };
 
     use crate::{
-        primitives::sinsemilla::{self, K},
+        ecc::ScalarFixed,
+        sinsemilla::primitives::{self as sinsemilla, K},
         {
             ecc::{
                 chip::{find_zs_and_us, EccChip, EccConfig, H, NUM_WINDOWS},
@@ -575,7 +616,7 @@ pub(crate) mod tests {
                 let merkle_crh = HashDomain::new(chip1.clone(), ecc_chip.clone(), &TestHashDomain);
 
                 // Layer 31, l = MERKLE_DEPTH - 1 - layer = 0
-                let l_bitstring = vec![Some(false); K];
+                let l_bitstring = vec![Value::known(false); K];
                 let l = MessagePiece::from_bitstring(
                     chip1.clone(),
                     layouter.namespace(|| "l"),
@@ -583,8 +624,9 @@ pub(crate) mod tests {
                 )?;
 
                 // Left leaf
-                let left_bitstring: Vec<Option<bool>> =
-                    (0..250).map(|_| Some(rand::random::<bool>())).collect();
+                let left_bitstring: Vec<Value<bool>> = (0..250)
+                    .map(|_| Value::known(rand::random::<bool>()))
+                    .collect();
                 let left = MessagePiece::from_bitstring(
                     chip1.clone(),
                     layouter.namespace(|| "left"),
@@ -592,35 +634,34 @@ pub(crate) mod tests {
                 )?;
 
                 // Right leaf
-                let right_bitstring: Vec<Option<bool>> =
-                    (0..250).map(|_| Some(rand::random::<bool>())).collect();
+                let right_bitstring: Vec<Value<bool>> = (0..250)
+                    .map(|_| Value::known(rand::random::<bool>()))
+                    .collect();
                 let right = MessagePiece::from_bitstring(
                     chip1.clone(),
                     layouter.namespace(|| "right"),
                     &right_bitstring,
                 )?;
 
-                let l_bitstring: Option<Vec<bool>> = l_bitstring.into_iter().collect();
-                let left_bitstring: Option<Vec<bool>> = left_bitstring.into_iter().collect();
-                let right_bitstring: Option<Vec<bool>> = right_bitstring.into_iter().collect();
+                let l_bitstring: Value<Vec<bool>> = l_bitstring.into_iter().collect();
+                let left_bitstring: Value<Vec<bool>> = left_bitstring.into_iter().collect();
+                let right_bitstring: Value<Vec<bool>> = right_bitstring.into_iter().collect();
 
                 // Witness expected parent
                 let expected_parent = {
-                    let expected_parent = if let (Some(l), Some(left), Some(right)) =
-                        (l_bitstring, left_bitstring, right_bitstring)
-                    {
-                        let merkle_crh = sinsemilla::HashDomain::from_Q((*Q).into());
-                        let point = merkle_crh
-                            .hash_to_point(
-                                l.into_iter()
-                                    .chain(left.into_iter())
-                                    .chain(right.into_iter()),
-                            )
-                            .unwrap();
-                        Some(point.to_affine())
-                    } else {
-                        None
-                    };
+                    let expected_parent = l_bitstring.zip(left_bitstring.zip(right_bitstring)).map(
+                        |(l, (left, right))| {
+                            let merkle_crh = sinsemilla::HashDomain::from_Q((*Q).into());
+                            let point = merkle_crh
+                                .hash_to_point(
+                                    l.into_iter()
+                                        .chain(left.into_iter())
+                                        .chain(right.into_iter()),
+                                )
+                                .unwrap();
+                            point.to_affine()
+                        },
+                    );
 
                     NonIdentityPoint::new(
                         ecc_chip.clone(),
@@ -647,28 +688,32 @@ pub(crate) mod tests {
                 let test_commit =
                     CommitDomain::new(chip2.clone(), ecc_chip.clone(), &TestCommitDomain);
                 let r_val = pallas::Scalar::random(rng);
-                let message: Vec<Option<bool>> =
-                    (0..500).map(|_| Some(rand::random::<bool>())).collect();
+                let message: Vec<Value<bool>> = (0..500)
+                    .map(|_| Value::known(rand::random::<bool>()))
+                    .collect();
 
                 let (result, _) = {
+                    let r = ScalarFixed::new(
+                        ecc_chip.clone(),
+                        layouter.namespace(|| "r"),
+                        Value::known(r_val),
+                    )?;
                     let message = Message::from_bitstring(
                         chip2,
                         layouter.namespace(|| "witness message"),
                         message.clone(),
                     )?;
-                    test_commit.commit(layouter.namespace(|| "commit"), message, Some(r_val))?
+                    test_commit.commit(layouter.namespace(|| "commit"), message, r)?
                 };
 
                 // Witness expected result.
                 let expected_result = {
-                    let message: Option<Vec<bool>> = message.into_iter().collect();
-                    let expected_result = if let Some(message) = message {
+                    let message: Value<Vec<bool>> = message.into_iter().collect();
+                    let expected_result = message.map(|message| {
                         let domain = sinsemilla::CommitDomain::new(PERSONALIZATION);
                         let point = domain.commit(message.into_iter(), &r_val).unwrap();
-                        Some(point.to_affine())
-                    } else {
-                        None
-                    };
+                        point.to_affine()
+                    });
 
                     NonIdentityPoint::new(
                         ecc_chip,
@@ -693,7 +738,7 @@ pub(crate) mod tests {
         assert_eq!(prover.verify(), Ok(()))
     }
 
-    #[cfg(feature = "dev-graph")]
+    #[cfg(feature = "test-dev-graph")]
     #[test]
     fn print_sinsemilla_chip() {
         use plotters::prelude::*;

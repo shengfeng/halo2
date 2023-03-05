@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
+use group::ff::Field;
 use halo2_proofs::{
-    arithmetic::FieldExt,
-    circuit::{AssignedCell, Chip, Layouter, Region, SimpleFloorPlanner},
+    circuit::{AssignedCell, Chip, Layouter, Region, SimpleFloorPlanner, Value},
     plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Instance, Selector},
     poly::Rotation,
 };
@@ -10,9 +10,9 @@ use halo2_proofs::{
 // ANCHOR: field-instructions
 /// A variable representing a number.
 #[derive(Clone)]
-struct Number<F: FieldExt>(AssignedCell<F, F>);
+struct Number<F: Field>(AssignedCell<F, F>);
 
-trait FieldInstructions<F: FieldExt>: AddInstructions<F> + MulInstructions<F> {
+trait FieldInstructions<F: Field>: AddInstructions<F> + MulInstructions<F> {
     /// Variable representing a number.
     type Num;
 
@@ -20,7 +20,7 @@ trait FieldInstructions<F: FieldExt>: AddInstructions<F> + MulInstructions<F> {
     fn load_private(
         &self,
         layouter: impl Layouter<F>,
-        a: Option<F>,
+        a: Value<F>,
     ) -> Result<<Self as FieldInstructions<F>>::Num, Error>;
 
     /// Returns `d = (a + b) * c`.
@@ -43,7 +43,7 @@ trait FieldInstructions<F: FieldExt>: AddInstructions<F> + MulInstructions<F> {
 // ANCHOR_END: field-instructions
 
 // ANCHOR: add-instructions
-trait AddInstructions<F: FieldExt>: Chip<F> {
+trait AddInstructions<F: Field>: Chip<F> {
     /// Variable representing a number.
     type Num;
 
@@ -58,7 +58,7 @@ trait AddInstructions<F: FieldExt>: Chip<F> {
 // ANCHOR_END: add-instructions
 
 // ANCHOR: mul-instructions
-trait MulInstructions<F: FieldExt>: Chip<F> {
+trait MulInstructions<F: Field>: Chip<F> {
     /// Variable representing a number.
     type Num;
 
@@ -108,28 +108,28 @@ struct MulConfig {
 
 // ANCHOR: field-chip
 /// The top-level chip that will implement the `FieldInstructions`.
-struct FieldChip<F: FieldExt> {
+struct FieldChip<F: Field> {
     config: FieldConfig,
     _marker: PhantomData<F>,
 }
 // ANCHOR_END: field-chip
 
 // ANCHOR: add-chip
-struct AddChip<F: FieldExt> {
+struct AddChip<F: Field> {
     config: AddConfig,
     _marker: PhantomData<F>,
 }
 // ANCHOR END: add-chip
 
 // ANCHOR: mul-chip
-struct MulChip<F: FieldExt> {
+struct MulChip<F: Field> {
     config: MulConfig,
     _marker: PhantomData<F>,
 }
 // ANCHOR_END: mul-chip
 
 // ANCHOR: add-chip-trait-impl
-impl<F: FieldExt> Chip<F> for AddChip<F> {
+impl<F: Field> Chip<F> for AddChip<F> {
     type Config = AddConfig;
     type Loaded = ();
 
@@ -144,7 +144,7 @@ impl<F: FieldExt> Chip<F> for AddChip<F> {
 // ANCHOR END: add-chip-trait-impl
 
 // ANCHOR: add-chip-impl
-impl<F: FieldExt> AddChip<F> {
+impl<F: Field> AddChip<F> {
     fn construct(config: <Self as Chip<F>>::Config, _loaded: <Self as Chip<F>>::Loaded) -> Self {
         Self {
             config,
@@ -174,7 +174,7 @@ impl<F: FieldExt> AddChip<F> {
 // ANCHOR END: add-chip-impl
 
 // ANCHOR: add-instructions-impl
-impl<F: FieldExt> AddInstructions<F> for FieldChip<F> {
+impl<F: Field> AddInstructions<F> for FieldChip<F> {
     type Num = Number<F>;
     fn add(
         &self,
@@ -189,7 +189,7 @@ impl<F: FieldExt> AddInstructions<F> for FieldChip<F> {
     }
 }
 
-impl<F: FieldExt> AddInstructions<F> for AddChip<F> {
+impl<F: Field> AddInstructions<F> for AddChip<F> {
     type Num = Number<F>;
 
     fn add(
@@ -217,17 +217,12 @@ impl<F: FieldExt> AddInstructions<F> for AddChip<F> {
 
                 // Now we can compute the addition result, which is to be assigned
                 // into the output position.
-                let value = a.0.value().and_then(|a| b.0.value().map(|b| *a + *b));
+                let value = a.0.value().copied() + b.0.value();
 
                 // Finally, we do the assignment to the output, returning a
                 // variable to be used in another part of the circuit.
                 region
-                    .assign_advice(
-                        || "lhs + rhs",
-                        config.advice[0],
-                        1,
-                        || value.ok_or(Error::Synthesis),
-                    )
+                    .assign_advice(|| "lhs + rhs", config.advice[0], 1, || value)
                     .map(Number)
             },
         )
@@ -236,7 +231,7 @@ impl<F: FieldExt> AddInstructions<F> for AddChip<F> {
 // ANCHOR END: add-instructions-impl
 
 // ANCHOR: mul-chip-trait-impl
-impl<F: FieldExt> Chip<F> for MulChip<F> {
+impl<F: Field> Chip<F> for MulChip<F> {
     type Config = MulConfig;
     type Loaded = ();
 
@@ -251,7 +246,7 @@ impl<F: FieldExt> Chip<F> for MulChip<F> {
 // ANCHOR END: mul-chip-trait-impl
 
 // ANCHOR: mul-chip-impl
-impl<F: FieldExt> MulChip<F> {
+impl<F: Field> MulChip<F> {
     fn construct(config: <Self as Chip<F>>::Config, _loaded: <Self as Chip<F>>::Loaded) -> Self {
         Self {
             config,
@@ -301,7 +296,7 @@ impl<F: FieldExt> MulChip<F> {
 // ANCHOR_END: mul-chip-impl
 
 // ANCHOR: mul-instructions-impl
-impl<F: FieldExt> MulInstructions<F> for FieldChip<F> {
+impl<F: Field> MulInstructions<F> for FieldChip<F> {
     type Num = Number<F>;
     fn mul(
         &self,
@@ -315,7 +310,7 @@ impl<F: FieldExt> MulInstructions<F> for FieldChip<F> {
     }
 }
 
-impl<F: FieldExt> MulInstructions<F> for MulChip<F> {
+impl<F: Field> MulInstructions<F> for MulChip<F> {
     type Num = Number<F>;
 
     fn mul(
@@ -343,17 +338,12 @@ impl<F: FieldExt> MulInstructions<F> for MulChip<F> {
 
                 // Now we can compute the multiplication result, which is to be assigned
                 // into the output position.
-                let value = a.0.value().and_then(|a| b.0.value().map(|b| *a * *b));
+                let value = a.0.value().copied() * b.0.value();
 
                 // Finally, we do the assignment to the output, returning a
                 // variable to be used in another part of the circuit.
                 region
-                    .assign_advice(
-                        || "lhs * rhs",
-                        config.advice[0],
-                        1,
-                        || value.ok_or(Error::Synthesis),
-                    )
+                    .assign_advice(|| "lhs * rhs", config.advice[0], 1, || value)
                     .map(Number)
             },
         )
@@ -362,7 +352,7 @@ impl<F: FieldExt> MulInstructions<F> for MulChip<F> {
 // ANCHOR END: mul-instructions-impl
 
 // ANCHOR: field-chip-trait-impl
-impl<F: FieldExt> Chip<F> for FieldChip<F> {
+impl<F: Field> Chip<F> for FieldChip<F> {
     type Config = FieldConfig;
     type Loaded = ();
 
@@ -377,7 +367,7 @@ impl<F: FieldExt> Chip<F> for FieldChip<F> {
 // ANCHOR_END: field-chip-trait-impl
 
 // ANCHOR: field-chip-impl
-impl<F: FieldExt> FieldChip<F> {
+impl<F: Field> FieldChip<F> {
     fn construct(config: <Self as Chip<F>>::Config, _loaded: <Self as Chip<F>>::Loaded) -> Self {
         Self {
             config,
@@ -406,13 +396,13 @@ impl<F: FieldExt> FieldChip<F> {
 // ANCHOR_END: field-chip-impl
 
 // ANCHOR: field-instructions-impl
-impl<F: FieldExt> FieldInstructions<F> for FieldChip<F> {
+impl<F: Field> FieldInstructions<F> for FieldChip<F> {
     type Num = Number<F>;
 
     fn load_private(
         &self,
         mut layouter: impl Layouter<F>,
-        value: Option<F>,
+        value: Value<F>,
     ) -> Result<<Self as FieldInstructions<F>>::Num, Error> {
         let config = self.config();
 
@@ -420,12 +410,7 @@ impl<F: FieldExt> FieldInstructions<F> for FieldChip<F> {
             || "load private",
             |mut region| {
                 region
-                    .assign_advice(
-                        || "private input",
-                        config.advice[0],
-                        0,
-                        || value.ok_or(Error::Synthesis),
-                    )
+                    .assign_advice(|| "private input", config.advice[0], 0, || value)
                     .map(Number)
             },
         )
@@ -459,17 +444,17 @@ impl<F: FieldExt> FieldInstructions<F> for FieldChip<F> {
 // ANCHOR: circuit
 /// The full circuit implementation.
 ///
-/// In this struct we store the private input variables. We use `Option<F>` because
+/// In this struct we store the private input variables. We use `Value<F>` because
 /// they won't have any value during key generation. During proving, if any of these
-/// were `None` we would get an error.
+/// were `Value::unknown()` we would get an error.
 #[derive(Default)]
-struct MyCircuit<F: FieldExt> {
-    a: Option<F>,
-    b: Option<F>,
-    c: Option<F>,
+struct MyCircuit<F: Field> {
+    a: Value<F>,
+    b: Value<F>,
+    c: Value<F>,
 }
 
-impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
+impl<F: Field> Circuit<F> for MyCircuit<F> {
     // Since we are using a single chip for everything, we can just reuse its config.
     type Config = FieldConfig;
     type FloorPlanner = SimpleFloorPlanner;
@@ -511,7 +496,6 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
 
 #[allow(clippy::many_single_char_names)]
 fn main() {
-    use group::ff::Field;
     use halo2_proofs::{dev::MockProver, pasta::Fp};
     use rand_core::OsRng;
 
@@ -529,9 +513,9 @@ fn main() {
 
     // Instantiate the circuit with the private inputs.
     let circuit = MyCircuit {
-        a: Some(a),
-        b: Some(b),
-        c: Some(c),
+        a: Value::known(a),
+        b: Value::known(b),
+        c: Value::known(c),
     };
 
     // Arrange the public input. We expose the multiplication result in row 0

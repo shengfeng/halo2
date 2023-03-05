@@ -1,14 +1,12 @@
-use std::{array, collections::HashSet};
+use std::collections::HashSet;
 
 use super::NonIdentityEccPoint;
-use ff::Field;
-use group::Curve;
 use halo2_proofs::{
     circuit::Region,
-    plonk::{Advice, Column, ConstraintSystem, Error, Selector},
+    plonk::{Advice, Column, ConstraintSystem, Constraints, Error, Selector},
     poly::Rotation,
 };
-use pasta_curves::{arithmetic::CurveAffine, pallas};
+use pasta_curves::pallas;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Config {
@@ -50,11 +48,14 @@ impl Config {
     }
 
     pub(crate) fn advice_columns(&self) -> HashSet<Column<Advice>> {
-        core::array::IntoIter::new([self.x_p, self.y_p, self.x_qr, self.y_qr]).collect()
+        [self.x_p, self.y_p, self.x_qr, self.y_qr]
+            .into_iter()
+            .collect()
     }
 
     fn create_gate(&self, meta: &mut ConstraintSystem<pallas::Base>) {
-        meta.create_gate("incomplete addition gates", |meta| {
+        // https://p.z.cash/halo2-0.1:ecc-incomplete-addition
+        meta.create_gate("incomplete addition", |meta| {
             let q_add_incomplete = meta.query_selector(self.q_add_incomplete);
             let x_p = meta.query_advice(self.x_p, Rotation::cur());
             let y_p = meta.query_advice(self.y_p, Rotation::cur());
@@ -74,8 +75,7 @@ impl Config {
             // (y_r + y_q)(x_p − x_q) − (y_p − y_q)(x_q − x_r) = 0
             let poly2 = (y_r + y_q.clone()) * (x_p - x_q.clone()) - (y_p - y_q) * (x_q - x_r);
 
-            array::IntoIter::new([("x_r", poly1), ("y_r", poly2)])
-                .map(move |(name, poly)| (name, q_add_incomplete.clone() * poly))
+            Constraints::with_selector(q_add_incomplete, [("x_r", poly1), ("y_r", poly2)])
         });
     }
 
@@ -95,20 +95,14 @@ impl Config {
         x_p.zip(y_p)
             .zip(x_q)
             .zip(y_q)
-            .map(|(((x_p, y_p), x_q), y_q)| {
+            .error_if_known_and(|(((x_p, y_p), x_q), y_q)| {
                 // P is point at infinity
-                if (x_p.is_zero_vartime() && y_p.is_zero_vartime())
+                (x_p.is_zero_vartime() && y_p.is_zero_vartime())
                 // Q is point at infinity
                 || (x_q.is_zero_vartime() && y_q.is_zero_vartime())
                 // x_p = x_q
                 || (x_p == x_q)
-                {
-                    Err(Error::Synthesis)
-                } else {
-                    Ok(())
-                }
-            })
-            .transpose()?;
+            })?;
 
         // Copy point `p` into `x_p`, `y_p` columns
         p.x.copy_advice(|| "x_p", region, self.x_p, offset)?;
@@ -119,39 +113,30 @@ impl Config {
         q.y.copy_advice(|| "y_q", region, self.y_qr, offset)?;
 
         // Compute the sum `P + Q = R`
-        let r = {
-            let p = p.point();
-            let q = q.point();
-            let r = p
-                .zip(q)
-                .map(|(p, q)| (p + q).to_affine().coordinates().unwrap());
-            let r_x = r.map(|r| *r.x());
-            let r_y = r.map(|r| *r.y());
-
-            (r_x, r_y)
-        };
+        let r = x_p
+            .zip(y_p)
+            .zip(x_q)
+            .zip(y_q)
+            .map(|(((x_p, y_p), x_q), y_q)| {
+                {
+                    // λ = (y_q - y_p)/(x_q - x_p)
+                    let lambda = (y_q - y_p) * (x_q - x_p).invert();
+                    // x_r = λ^2 - x_p - x_q
+                    let x_r = lambda.square() - x_p - x_q;
+                    // y_r = λ(x_p - x_r) - y_p
+                    let y_r = lambda * (x_p - x_r) - y_p;
+                    (x_r, y_r)
+                }
+            });
 
         // Assign the sum to `x_qr`, `y_qr` columns in the next row
-        let x_r = r.0;
-        let x_r_var = region.assign_advice(
-            || "x_r",
-            self.x_qr,
-            offset + 1,
-            || x_r.ok_or(Error::Synthesis),
-        )?;
+        let x_r = r.map(|r| r.0);
+        let x_r_var = region.assign_advice(|| "x_r", self.x_qr, offset + 1, || x_r)?;
 
-        let y_r = r.1;
-        let y_r_var = region.assign_advice(
-            || "y_r",
-            self.y_qr,
-            offset + 1,
-            || y_r.ok_or(Error::Synthesis),
-        )?;
+        let y_r = r.map(|r| r.1);
+        let y_r_var = region.assign_advice(|| "y_r", self.y_qr, offset + 1, || y_r)?;
 
-        let result = NonIdentityEccPoint {
-            x: x_r_var,
-            y: y_r_var,
-        };
+        let result = NonIdentityEccPoint::from_coordinates_unchecked(x_r_var, y_r_var);
 
         Ok(result)
     }
@@ -160,7 +145,10 @@ impl Config {
 #[cfg(test)]
 pub mod tests {
     use group::Curve;
-    use halo2_proofs::{circuit::Layouter, plonk::Error};
+    use halo2_proofs::{
+        circuit::{Layouter, Value},
+        plonk::Error,
+    };
     use pasta_curves::pallas;
 
     use crate::ecc::{EccInstructions, NonIdentityPoint};
@@ -184,7 +172,7 @@ pub mod tests {
             let witnessed_result = NonIdentityPoint::new(
                 chip,
                 layouter.namespace(|| "witnessed P + Q"),
-                Some((p_val + q_val).to_affine()),
+                Value::known((p_val + q_val).to_affine()),
             )?;
             result.constrain_equal(layouter.namespace(|| "constrain P + Q"), &witnessed_result)?;
         }

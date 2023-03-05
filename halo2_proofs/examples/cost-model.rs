@@ -102,7 +102,7 @@ impl FromStr for Poly {
 
 #[derive(Debug)]
 struct Lookup {
-    columns: usize,
+    _columns: usize,
     input_deg: usize,
     table_deg: usize,
 }
@@ -112,11 +112,11 @@ impl FromStr for Lookup {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.split(',');
-        let columns = parts.next().unwrap().parse()?;
+        let _columns = parts.next().unwrap().parse()?;
         let input_deg = parts.next().unwrap().parse()?;
         let table_deg = parts.next().unwrap().parse()?;
         Ok(Lookup {
-            columns,
+            _columns,
             input_deg,
             table_deg,
         })
@@ -125,7 +125,7 @@ impl FromStr for Lookup {
 
 impl Lookup {
     fn required_degree(&self) -> usize {
-        1 + cmp::max(1, self.input_deg) + cmp::max(1, self.table_deg)
+        2 + cmp::max(1, self.input_deg) + cmp::max(1, self.table_deg)
     }
 
     fn queries(&self) -> impl Iterator<Item = Poly> {
@@ -210,8 +210,8 @@ impl From<CostOptions> for Circuit {
             .chain(opts.instance.iter())
             .chain(opts.fixed.iter())
             .cloned()
-            .chain(opts.lookup.iter().map(|l| l.queries()).flatten())
-            .chain(opts.permutation.iter().map(|p| p.queries()).flatten())
+            .chain(opts.lookup.iter().flat_map(|l| l.queries()))
+            .chain(opts.permutation.iter().flat_map(|p| p.queries()))
             .chain(iter::repeat("0".parse().unwrap()).take(max_deg - 1))
             .collect();
 

@@ -4,23 +4,34 @@ on: [push, pull_request]
 
 jobs:
   test:
-    name: Test on ${{ matrix.os }}
+    name: Test on ${{ matrix.os }}${{ matrix.name_suffix }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        stage: [stable, beta, nightly]
         os: [ubuntu-latest, windows-latest, macOS-latest]
+        include:
+          - stage: beta
+            name_suffix: " with beta features"
+            extra_flags: --features beta
+          - stage: nightly
+            name_suffix: " with nightly features"
+            extra_flags: --features nightly
 
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: 1.51.0
-          override: true
+      - uses: actions/checkout@v3
+      - id: prepare
+        uses: ./.github/actions/prepare
       - name: Run tests
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --verbose --release --all --all-features
+          args: >
+            --verbose
+            --release
+            --workspace
+            ${{ steps.prepare.outputs.feature-flags }}
+            ${{ matrix.extra_flags }}
 
   build:
     name: Build target ${{ matrix.target }}
@@ -32,30 +43,34 @@ jobs:
           - wasm32-wasi
 
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v3
+      - id: prepare
+        uses: ./.github/actions/prepare
         with:
-          toolchain: 1.51.0
-          override: true
+          nightly-features: true
+          test-dependencies: false
       - name: Add target
         run: rustup target add ${{ matrix.target }}
       - name: cargo build
         uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --features dev-graph,gadget-traces,unstable --target ${{ matrix.target }}
+          args: >
+            ${{ steps.prepare.outputs.feature-flags }}
+            --target ${{ matrix.target }}
 
   bitrot:
     name: Bitrot check
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v3
+      # Check bitrot with stable (as we don't need benchmarks or the test-dev-graph
+      # feature flag to work with MSRV).
+      - uses: ./.github/actions/prepare
         with:
-          toolchain: 1.51.0
-          override: true
-      # Build benchmarks to prevent bitrot
+          toolchain: stable
+      # Build benchmarks and all-features to prevent bitrot
       - name: Build benchmarks
         uses: actions-rs/cargo@v1
         with:
@@ -66,11 +81,8 @@ jobs:
     name: Book tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: 1.51.0
-          override: true
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/prepare
       - name: cargo build
         uses: actions-rs/cargo@v1
         with:
@@ -87,12 +99,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       # Use stable for this to ensure that cargo-tarpaulin can be built.
-      - uses: actions-rs/toolchain@v1
+      - id: prepare
+        uses: ./.github/actions/prepare
         with:
           toolchain: stable
-          override: true
+          nightly-features: true
       - name: Install cargo-tarpaulin
         uses: actions-rs/cargo@v1
         with:
@@ -102,20 +115,20 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: tarpaulin
-          args: --all-features --timeout 600 --out Xml
+          args: >
+            ${{ steps.prepare.outputs.feature-flags }}
+            --timeout 600
+            --out Xml
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v2.1.0
+        uses: codecov/codecov-action@v3.1.1
 
   doc-links:
     name: Intra-doc links
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: 1.51.0
-          override: true
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/prepare
       - name: cargo fetch
         uses: actions-rs/cargo@v1
         with:
@@ -134,11 +147,8 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: 1.51.0
-          override: true
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/prepare
       - run: rustup component add rustfmt
       - uses: actions-rs/cargo@v1
         with:
